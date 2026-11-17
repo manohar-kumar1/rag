@@ -5,21 +5,28 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, HTTPException, Request
 from psycopg_pool import ConnectionPool
 
+from app.composition import Container, build_container
 from app.core.config import get_settings
-from app.db.connection import create_pool
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    pool = create_pool(get_settings())
-    pool.open(wait=True, timeout=15)
-    app.state.pool = pool
+    settings = get_settings()
+    container = build_container(settings)
+    container.pool.open(wait=True, timeout=settings.db_pool_timeout_seconds)
+    app.state.container = container
     yield
-    pool.close()
+    container.pool.close()
 
 
-def get_pool(request: Request) -> ConnectionPool:
-    return request.app.state.pool
+def get_container(request: Request) -> Container:
+    return request.app.state.container
+
+
+def get_pool(
+    container: Annotated[Container, Depends(get_container)],
+) -> ConnectionPool:
+    return container.pool
 
 
 app = FastAPI(title="RAG", lifespan=lifespan)

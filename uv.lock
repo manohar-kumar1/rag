@@ -3057,7 +3057,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "pypdf", specifier = ">=5.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "sentence-transformers", specifier = ">=3.0" },
+    { name = "sentence-transformers", specifier = ">=6.3.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 
