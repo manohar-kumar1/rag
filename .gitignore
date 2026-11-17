@@ -1,9 +1,24 @@
+# Python
 .venv/
 __pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# Secrets
 .env
+.env.*
+!.env.example
+
+# Data
 data/raw/*
 data/processed/*
 !.gitkeep
+
+# AI tooling
 .agents/
 .claude/
 CLAUDE.md
+.mcp.json
