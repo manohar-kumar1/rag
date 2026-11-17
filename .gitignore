@@ -4,6 +4,6 @@ __pycache__/
 data/raw/*
 data/processed/*
 !.gitkeep
-.agents
-.claude
+.agents/
 .claude/
+CLAUDE.md
