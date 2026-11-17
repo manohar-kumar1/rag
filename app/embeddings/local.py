@@ -3,18 +3,13 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from app.embeddings.errors import EmbeddingDimensionMismatch
+
 
 class SentenceEncoder(Protocol):
     def encode(self, sentences: list[str]) -> Any: ...
 
     def get_embedding_dimension(self) -> int | None: ...
-
-
-class EmbeddingDimensionMismatch(ValueError):
-    def __init__(self, expected: int, actual: int | None) -> None:
-        super().__init__(
-            f"embedding model produces {actual} dimensions, expected {expected}"
-        )
 
 
 class SentenceTransformerEmbedder:

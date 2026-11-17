@@ -17,8 +17,5 @@ data/raw/*
 data/processed/*
 !.gitkeep
 
-# AI tooling
-.agents/
-.claude/
-CLAUDE.md
-.mcp.json
+# Tests
+tests/*
