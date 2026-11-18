@@ -3,7 +3,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from app.embeddings.errors import EmbeddingDimensionMismatch
+from app.exceptions.exception import EmbeddingDimensionMismatch
 
 
 class SentenceEncoder(Protocol):

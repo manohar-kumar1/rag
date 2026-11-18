@@ -1,13 +1,14 @@
 import argparse
 import math
-import sys
 from collections.abc import Sequence
 
 import psycopg
 
 from app.core.config import get_settings
 from app.db.connection import to_psycopg_dsn
-from app.db.migrator import MigrationError, Migrator, load_migrations
+from app.db.migrator import Migrator, load_migrations
+from app.exceptions.exception import AppError
+from app.exceptions.handlers import report_cli_error
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -33,9 +34,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 print(f"applied: {', '.join(migrator.applied_versions()) or 'none'}")
                 print(f"pending: {', '.join(m.version for m in migrator.pending()) or 'none'}")
-        except MigrationError as error:
-            print(f"migration error: {error}", file=sys.stderr)
-            return 1
+        except AppError as error:
+            return report_cli_error(error)
     return 0
 
 

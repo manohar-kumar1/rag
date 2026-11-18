@@ -3,7 +3,7 @@ from collections.abc import Callable, Sequence
 
 import httpx
 
-from app.embeddings.errors import EmbeddingDimensionMismatch, EmbeddingError
+from app.exceptions.exception import EmbeddingDimensionMismatch, EmbeddingError
 
 PASSAGE_TASK = "retrieval.passage"
 QUERY_TASK = "retrieval.query"

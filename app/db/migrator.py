@@ -8,16 +8,13 @@ from pathlib import Path
 import psycopg
 
 from app.db.schema import FULL_TEXT_LANGUAGE, MAX_INDEXED_DIMENSIONS
+from app.exceptions.exception import MigrationError
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 ADVISORY_LOCK_ID = 7283410001
 FILE_PATTERN = re.compile(
     r"^(?P<version>\d{4})_(?P<name>[a-z0-9_]+)\.(?P<direction>up|down)\.sql$"
 )
-
-
-class MigrationError(RuntimeError):
-    pass
 
 
 @dataclass(frozen=True)

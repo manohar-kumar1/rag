@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     jina_max_retries: int
     jina_retry_backoff_seconds: float
     jina_timeout_seconds: float
+    chunk_size: int
+    chunk_overlap: int
     google_api_key: str
     google_model: str
     google_decision_model: str
@@ -38,6 +40,8 @@ class Settings(BaseSettings):
             raise ValueError("jina batch size must be at least 1 and retries not negative")
         if self.jina_retry_backoff_seconds < 0 or self.jina_timeout_seconds <= 0:
             raise ValueError("jina backoff must not be negative and timeout must be positive")
+        if not 0 <= self.chunk_overlap < self.chunk_size:
+            raise ValueError("chunk sizes must satisfy 0 <= overlap < size")
         return self
 
     @property
