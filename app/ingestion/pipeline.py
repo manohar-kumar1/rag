@@ -1,12 +1,26 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
 
 from app.embeddings.protocol import Embedder
-from app.exceptions.exception import EmbeddingError, EmbeddingFailed, EmptyDocumentError
+from app.exceptions.exception import (
+    EmbeddingError,
+    EmbeddingFailed,
+    EmptyDocumentError,
+    FileTooLarge,
+)
 from app.ingestion.chunking import Chunker
-from app.ingestion.detect import FileType, detect_file_type
+from app.ingestion.detect import MIME_TYPES, FileType, detect_file_type
 from app.ingestion.parsers import ParserRegistry
-from app.ingestion.store import DocumentStore, NewDocument
+from app.ingestion.sources import SourceDocument, SyncResult
+from app.ingestion.status import IngestionStage
+from app.ingestion.store import DocumentStore, NewDocument, NewExternalDocument
+
+StageListener = Callable[[IngestionStage], None]
+
+
+def ignore_stage(stage: IngestionStage) -> None:
+    return None
 
 
 @dataclass(frozen=True)
@@ -18,7 +32,6 @@ class IngestionResult:
 
 @dataclass(frozen=True)
 class PreparedContent:
-    file_type: FileType
     chunks: list[str]
     vectors: list[list[float]]
 
@@ -30,11 +43,13 @@ class IngestionPipeline:
         chunker: Chunker,
         embedder: Embedder,
         store: DocumentStore,
+        max_extracted_chars: int,
     ) -> None:
         self._parsers = parsers
         self._chunker = chunker
         self._embedder = embedder
         self._store = store
+        self._max_extracted_chars = max_extracted_chars
 
     def ingest(
         self, data: bytes, source: str, title: str | None = None
@@ -43,33 +58,73 @@ class IngestionPipeline:
         existing = self._store.find_by_hash(content_hash)
         if existing is not None:
             return IngestionResult(existing.id, False, existing.chunk_count)
-        prepared = self._prepare(data)
+        file_type, prepared = self._prepare_file(data)
         stored = self._store.add_document(
             NewDocument(
                 source=source,
                 title=title,
                 content_hash=content_hash,
-                metadata={"file_type": prepared.file_type.value, "size_bytes": len(data)},
+                metadata={},
+                original_filename=source,
+                content_type=MIME_TYPES[file_type],
+                size_bytes=len(data),
             ),
             prepared.chunks,
             prepared.vectors,
         )
         return IngestionResult(stored.id, stored.created, stored.chunk_count)
 
-    def reingest(self, document_id: int, data: bytes) -> IngestionResult:
-        prepared = self._prepare(data)
+    def reingest(
+        self, document_id: int, data: bytes, on_stage: StageListener = ignore_stage
+    ) -> IngestionResult:
+        _, prepared = self._prepare_file(data, on_stage)
         self._store.replace_chunks(
             document_id, sha256(data).hexdigest(), prepared.chunks, prepared.vectors
         )
         return IngestionResult(document_id, False, len(prepared.chunks))
 
-    def _prepare(self, data: bytes) -> PreparedContent:
+    def ingest_source_document(self, document: SourceDocument) -> SyncResult:
+        encoded = document.text.encode("utf-8")
+        content_hash = sha256(encoded).hexdigest()
+        existing = self._store.find_by_external_ref(document.reference)
+        if existing is not None and existing.content_hash == content_hash:
+            return SyncResult(
+                document.reference, existing.id, "unchanged", existing.chunk_count
+            )
+        prepared = self._prepare_text(document.text)
+        stored = self._store.upsert_external(
+            NewExternalDocument(
+                reference=document.reference,
+                title=document.title,
+                content_hash=content_hash,
+                metadata=document.metadata,
+                size_bytes=len(encoded),
+            ),
+            prepared.chunks,
+            prepared.vectors,
+        )
+        return SyncResult(
+            document.reference, stored.id, stored.outcome, stored.chunk_count
+        )
+
+    def _prepare_file(
+        self, data: bytes, on_stage: StageListener = ignore_stage
+    ) -> tuple[FileType, PreparedContent]:
         file_type = detect_file_type(data)
-        text = self._parsers.parse(data, file_type)
+        return file_type, self._prepare_text(
+            self._parsers.parse(data, file_type), on_stage
+        )
+
+    def _prepare_text(
+        self, text: str, on_stage: StageListener = ignore_stage
+    ) -> PreparedContent:
+        if len(text) > self._max_extracted_chars:
+            raise FileTooLarge("extracted text is too long")
         chunks = self._chunker.split(text) if text.strip() else []
         if not chunks:
             raise EmptyDocumentError
-        return PreparedContent(file_type, chunks, self._embed(chunks))
+        on_stage(IngestionStage.EMBEDDING)
+        return PreparedContent(chunks, self._embed(chunks))
 
     def _embed(self, chunks: list[str]) -> list[list[float]]:
         try:

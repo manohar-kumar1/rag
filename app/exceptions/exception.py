@@ -21,8 +21,66 @@ class DatabaseUnavailable(AppError):
         super().__init__("database unavailable")
 
 
+class NotReady(AppError):
+    status_code = 503
+    code = "not_ready"
+
+    def __init__(self, failed: list[str]) -> None:
+        super().__init__(f"not ready: {', '.join(failed)}")
+
+    @property
+    def client_message(self) -> str:
+        return self.message
+
+
+class InvalidCursor(AppError):
+    status_code = 400
+    code = "invalid_cursor"
+
+    def __init__(self) -> None:
+        super().__init__("cursor is not valid")
+
+
+class IdempotencyKeyReused(AppError):
+    status_code = 422
+    code = "idempotency_key_reused"
+
+    def __init__(self) -> None:
+        super().__init__("idempotency key was already used with a different request")
+
+
+class IdempotencyKeyInProgress(AppError):
+    status_code = 409
+    code = "idempotency_request_in_progress"
+
+    def __init__(self) -> None:
+        super().__init__("a request with this idempotency key is still being processed")
+
+
+class JobNotFound(AppError):
+    status_code = 404
+    code = "job_not_found"
+
+    def __init__(self, job_id: int) -> None:
+        super().__init__(f"job {job_id} does not exist")
+
+
 class MigrationError(AppError):
     code = "migration_error"
+
+
+class StorageError(AppError):
+    status_code = 502
+    code = "storage_error"
+    public_message = "file storage unavailable"
+
+
+class StoredFileMissing(StorageError):
+    status_code = 404
+    code = "stored_file_missing"
+
+    def __init__(self) -> None:
+        super().__init__("stored file does not exist")
 
 
 class EmbeddingError(AppError):
@@ -56,6 +114,20 @@ class ParseError(IngestionError):
     code = "parse_error"
 
 
+class InvalidUpload(IngestionError):
+    status_code = 400
+    code = "invalid_upload"
+
+
+class InvalidSourceDocument(IngestionError):
+    code = "invalid_source_document"
+
+
+class FileTooLarge(IngestionError):
+    status_code = 413
+    code = "file_too_large"
+
+
 class EmptyDocumentError(IngestionError):
     code = "empty_document"
 
@@ -75,6 +147,16 @@ class DocumentNotFound(IngestionError):
 
     def __init__(self, document_id: int) -> None:
         super().__init__(f"document {document_id} does not exist")
+
+
+class DocumentNotRetryable(IngestionError):
+    status_code = 409
+    code = "document_not_retryable"
+
+    def __init__(self, document_id: int, status: str) -> None:
+        super().__init__(
+            f"document {document_id} is {status}, only failed documents can be retried"
+        )
 
 
 class ContentMismatch(IngestionError):

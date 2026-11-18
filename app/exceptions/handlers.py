@@ -1,54 +1,106 @@
 import logging
 import sys
+from http import HTTPStatus
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import Scope
 
+from app.core.request_id import REQUEST_ID_HEADER, request_id_of
 from app.exceptions.exception import AppError
 
 logger = logging.getLogger(__name__)
 
-
-def error_body(code: str, message: str, details: list[dict] | None = None) -> dict:
-    body = {"code": code, "message": message}
-    if details:
-        body["details"] = details
-    return {"error": body}
+PROBLEM_MEDIA_TYPE = "application/problem+json"
+PROBLEM_TYPE_PREFIX = "urn:rag:problem:"
 
 
-def error_response(
-    status_code: int, code: str, message: str, details: list[dict] | None = None
+def problem_title(status_code: int) -> str:
+    try:
+        return HTTPStatus(status_code).phrase
+    except ValueError:
+        return "Error"
+
+
+def problem_response(
+    scope: Scope,
+    status_code: int,
+    code: str,
+    detail: str,
+    errors: list[dict] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content=error_body(code, message, details))
+    request_id = request_id_of(scope)
+    body: dict = {
+        "type": f"{PROBLEM_TYPE_PREFIX}{code}",
+        "title": problem_title(status_code),
+        "status": status_code,
+        "detail": detail,
+        "instance": scope.get("path", ""),
+        "code": code,
+    }
+    if request_id:
+        body["request_id"] = request_id
+    if errors:
+        body["errors"] = errors
+    response_headers = dict(headers or {})
+    if request_id:
+        response_headers[REQUEST_ID_HEADER] = request_id
+    return JSONResponse(
+        body,
+        status_code=status_code,
+        headers=response_headers,
+        media_type=PROBLEM_MEDIA_TYPE,
+    )
 
 
 async def handle_app_error(request: Request, error: AppError) -> JSONResponse:
     if error.status_code >= 500:
-        logger.error("%s: %s", error.code, error.message, exc_info=error)
-    return error_response(error.status_code, error.code, error.client_message)
+        logger.error(
+            "%s: %s (request %s)",
+            error.code,
+            error.message,
+            request_id_of(request.scope),
+            exc_info=error,
+        )
+    return problem_response(
+        request.scope, error.status_code, error.code, error.client_message
+    )
 
 
 async def handle_http_exception(
     request: Request, error: StarletteHTTPException
 ) -> JSONResponse:
-    return error_response(error.status_code, f"http_{error.status_code}", str(error.detail))
+    return problem_response(
+        request.scope,
+        error.status_code,
+        f"http_{error.status_code}",
+        str(error.detail),
+        headers=error.headers,
+    )
 
 
 async def handle_validation_error(
     request: Request, error: RequestValidationError
 ) -> JSONResponse:
-    details = [
+    errors = [
         {"location": [str(part) for part in item["loc"]], "message": item["msg"]}
         for item in error.errors()
     ]
-    return error_response(422, "validation_error", "request validation failed", details)
+    return problem_response(
+        request.scope, 422, "validation_error", "request validation failed", errors
+    )
 
 
 async def handle_unexpected_error(request: Request, error: Exception) -> JSONResponse:
-    logger.exception("unhandled error", exc_info=error)
-    return error_response(500, "internal_error", AppError.public_message)
+    logger.exception(
+        "unhandled error (request %s)", request_id_of(request.scope), exc_info=error
+    )
+    return problem_response(
+        request.scope, 500, "internal_error", AppError.public_message
+    )
 
 
 def register_exception_handlers(app: FastAPI) -> None:

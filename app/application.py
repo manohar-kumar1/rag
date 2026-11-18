@@ -1,0 +1,71 @@
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.limits import UploadSizeLimitMiddleware
+from app.api.openapi import document_problem_media_type
+from app.api.routes import v1_router
+from app.api.system import router as system_router
+from app.composition import build_container
+from app.core.config import Settings
+from app.core.request_id import REQUEST_ID_HEADER, RequestIdMiddleware
+from app.exceptions.handlers import register_exception_handlers
+from app.ingestion.upload import EXTENSION_TYPES
+
+ALLOWED_METHODS = ["GET", "POST", "DELETE"]
+EXPOSED_HEADERS = ["Location", "Retry-After", "Idempotent-Replayed", REQUEST_ID_HEADER]
+
+
+def describe(settings: Settings) -> str:
+    extensions = ", ".join(sorted(EXTENSION_TYPES))
+    return (
+        "Upload documents, follow their ingestion jobs and manage them. "
+        f"Supported file extensions: {extensions} (PDF needs a text layer). "
+        f"Maximum upload size: {settings.max_upload_bytes} bytes. "
+        "Every error is an RFC 9457 problem document (application/problem+json) with a "
+        "stable code member."
+    )
+
+
+def create_app(settings: Settings) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        container = build_container(settings)
+        container.pool.open(wait=True, timeout=settings.db_pool_timeout_seconds)
+        app.state.container = container
+        if settings.worker_enabled:
+            container.worker.start()
+        try:
+            yield
+        finally:
+            container.worker.stop()
+            container.pool.close()
+
+    app = FastAPI(
+        title="RAG",
+        description=describe(settings),
+        lifespan=lifespan,
+        docs_url="/docs" if settings.docs_enabled else None,
+        redoc_url="/redoc" if settings.docs_enabled else None,
+    )
+    app.state.settings = settings
+    register_exception_handlers(app)
+    app.include_router(system_router)
+    app.include_router(v1_router)
+    app.add_middleware(
+        UploadSizeLimitMiddleware,
+        limit_bytes=settings.max_upload_bytes,
+        path=str(app.url_path_for("upload_document")),
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origin_list,
+        allow_methods=ALLOWED_METHODS,
+        allow_headers=["*"],
+        expose_headers=EXPOSED_HEADERS,
+    )
+    app.add_middleware(RequestIdMiddleware)
+    document_problem_media_type(app)
+    return app
