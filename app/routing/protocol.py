@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from enum import StrEnum
 from typing import Protocol
 
@@ -11,3 +12,9 @@ class Route(StrEnum):
 
 class RouteDecider(Protocol):
     def decide(self, question: Question) -> Route: ...
+
+
+class Grader(Protocol):
+    def sufficiency(self, question: str, passages: Sequence[str]) -> float: ...
+
+    def groundedness(self, answer: str, passages: Sequence[str]) -> float: ...

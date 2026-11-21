@@ -16,14 +16,17 @@ def create_local_embedder(settings: Settings) -> Embedder:
     )
 
 
-def create_jina_embedder(settings: Settings) -> Embedder:
-    client = httpx.Client(
+def create_jina_client(settings: Settings) -> httpx.Client:
+    return httpx.Client(
         base_url=settings.jina_base_url,
         headers={"Authorization": f"Bearer {settings.jina_api_key}"},
         timeout=settings.jina_timeout_seconds,
     )
+
+
+def create_jina_embedder(settings: Settings) -> Embedder:
     embedder = JinaEmbedder(
-        client,
+        create_jina_client(settings),
         model=settings.embedding_model,
         dimension=settings.embedding_dimension,
         batch_size=settings.jina_batch_size,

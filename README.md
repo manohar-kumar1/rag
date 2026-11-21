@@ -159,6 +159,30 @@ Changing the embedding model or dimension means re-embedding every document.
 | `LLM_RETRY_MAX_SECONDS` | Longest backoff delay |
 | `DECISION_TIMEOUT_SECONDS` | Timeout for one routing decision call |
 
+### Answering features
+
+| Variable | Description |
+|---|---|
+| `AGENT_MAX_SUBQUESTIONS` | Most sub-questions a complex question is split into |
+| `AGENT_MAX_ITERATIONS` | Most retrievals one complex question may use. When reached, the answer names what is missing |
+| `AGENT_MAX_REWRITES` | Times one sub-question's search may be reworded after weak results |
+| `AGENT_GRADE_THRESHOLD` | Probability, between 0 and 1, that the passages answer a sub-question before the loop moves on |
+| `MASK_PATTERNS` | JSON object of name to regular expression. Matches in questions are replaced by `[name]` before any model or log sees them |
+| `GROUNDEDNESS_CHECK_ENABLED` | Check each answer against its cited passages before returning it |
+| `GROUNDEDNESS_THRESHOLD` | Probability, between 0 and 1, below which an answer is replaced by "could not verify" |
+| `CONVERSATION_MAX_TURNS` | Earlier turns of a thread used for a follow-up |
+| `CONVERSATION_RETENTION_SECONDS` | Age after which stored conversation turns are deleted |
+| `RERANK_ENABLED` | Re-score retrieved chunks with the Jina reranker |
+| `RERANK_MODEL` | Jina reranker model. Required when reranking is on |
+| `RERANK_CANDIDATES` | Chunks retrieved for the reranker to score |
+| `RERANK_TOP_N` | Chunks kept after reranking |
+| `CONTEXTUAL_CHUNKING_ENABLED` | Write a short context note for every chunk at ingestion |
+| `CONTEXTUAL_MODEL` | Google model that writes the notes. Required when contextual chunking is on |
+| `ANSWER_CACHE_ENABLED` | Serve exact repeats of a question from the cache |
+| `ANSWER_CACHE_STORE` | `postgres` or `memory` |
+| `ANSWER_CACHE_TTL_SECONDS` | How long a cached answer is kept |
+| `ANSWER_CACHE_SEMANTIC_THRESHOLD` | Similarity at which a near-duplicate question is logged as a would-be cache hit. Near-duplicates are never served |
+
 ### Tracing and evaluation
 
 | Variable | Description |
@@ -202,14 +226,21 @@ curl -X POST http://localhost:8000/v1/query -H "Content-Type: application/json" 
     {"marker": 1, "chunk_id": 42, "document_id": 7, "source": "support-plans.md", "title": "support-plans", "chunk_index": 0, "text": "..."}
   ],
   "route": "simple",
-  "search_query": "What is the seat limit for Premium support?"
+  "search_query": "What is the seat limit for Premium support?",
+  "unanswered_parts": [],
+  "grounded": true,
+  "cached": false,
+  "thread_id": null
 }
 ```
 
 - The answer uses only the uploaded documents. When they do not contain the answer, `answered` is `false` and the answer says so.
 - Numbers in square brackets in the answer are the `marker` of a citation.
 - `history` holds up to 20 earlier turns. It is used only to rewrite a follow-up such as "And for Premium?" into a standalone search query, which is returned as `search_query`.
-- `route` is `simple` or `complex`. Complex questions currently use the same path as simple ones.
+- `route` is `simple` or `complex`. A complex question is split into sub-questions, each searched, judged and if needed searched again with other words, up to `AGENT_MAX_ITERATIONS` searches. Parts the documents do not cover are listed in `unanswered_parts`.
+- `grounded` is `true` when the answer passed the check against its passages, `false` when it failed and was replaced, and `null` when no check ran.
+- `cached` is `true` when the answer came from the answer cache.
+- Send a UUID as `thread_id` instead of `history` to let the server keep the conversation. Earlier turns of that thread are then used for follow-ups, even after a restart. Card numbers and national ids in questions are masked before anything is sent to a model or stored.
 
 The streaming endpoint sends `sources` (the numbered passages) first, then `token` events with answer text, then `done` with the same body as `POST /v1/query`. If something fails after the stream started, the last event is `error` with a problem document. Stopping the request stops generation.
 
@@ -347,6 +378,14 @@ uv run python -m app.retrieval.cli "what do house cats do all day?"
 
 Prints the top chunks with their fused score and the rank each side gave them. A chunk found by only one side shows `None` for the other. The vector side finds meaning, so a paraphrase matches. The keyword side finds exact terms, so an identifier such as `RB-90417` matches even when its embedding is unremarkable. The keyword side matches any word of the query, so long questions still find something. This reads from the database that `.env` points at.
 
+### Pruning old conversations
+
+```bash
+uv run python -m app.conversations.prune
+```
+
+Deletes conversation turns older than `CONVERSATION_RETENTION_SECONDS`. The service also prunes once at startup. Run the command from a scheduler on long-running deployments.
+
 ### Running more than one instance
 
 Each instance with `WORKER_ENABLED=true` runs its own worker, and row locking keeps them from claiming the same document. To scale the API without extra workers, leave the flag off on those instances.
@@ -380,8 +419,8 @@ Checklist:
 
 ## Limitations
 
-- Complex questions use the same retrieve-then-answer path as simple ones until the agent loop exists
-- Conversations are not stored on the server. The client sends recent turns with each question
+- The agent can only search the uploaded documents. It has no other tools
+- Masking is pattern-based, so identifiers in other formats are not caught
 - Retrieval searches every document, with no per-user filter yet
 - There is no authentication or per-user access control yet
 - Documents are shared by everyone who can reach the API

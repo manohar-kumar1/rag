@@ -33,6 +33,12 @@ class NotReady(AppError):
         return self.message
 
 
+class RerankError(AppError):
+    status_code = 502
+    code = "rerank_failed"
+    public_message = "reranking service unavailable"
+
+
 class DecisionError(AppError):
     status_code = 502
     code = "decision_failed"

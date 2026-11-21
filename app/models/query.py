@@ -1,6 +1,7 @@
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.answering.citations import Citation
 from app.answering.protocol import Answer, Question, Turn
@@ -19,11 +20,23 @@ class TurnIn(BaseModel):
 class QueryIn(BaseModel):
     question: str = Field(min_length=1, max_length=MAX_QUESTION_CHARS)
     history: list[TurnIn] = Field(default_factory=list, max_length=MAX_HISTORY_TURNS)
+    thread_id: UUID | None = Field(
+        default=None,
+        description="Server-stored conversation. When set, history comes from the server "
+        "and `history` must be empty.",
+    )
+
+    @model_validator(mode="after")
+    def history_or_thread(self) -> "QueryIn":
+        if self.thread_id is not None and self.history:
+            raise ValueError("send either thread_id or history, not both")
+        return self
 
     def to_question(self) -> Question:
         return Question(
             text=self.question,
             history=tuple(Turn(turn.role, turn.content) for turn in self.history),
+            thread_id=None if self.thread_id is None else str(self.thread_id),
         )
 
 
@@ -59,6 +72,10 @@ class QueryOut(BaseModel):
     citations: list[SourceOut]
     route: str | None
     search_query: str | None
+    unanswered_parts: list[str]
+    grounded: bool | None
+    cached: bool
+    thread_id: str | None
 
     @classmethod
     def from_answer(cls, answer: Answer) -> "QueryOut":
@@ -68,6 +85,10 @@ class QueryOut(BaseModel):
             citations=[SourceOut.from_citation(c) for c in answer.citations],
             route=answer.route,
             search_query=answer.search_query,
+            unanswered_parts=list(answer.unanswered_parts),
+            grounded=answer.grounded,
+            cached=answer.cached,
+            thread_id=answer.thread_id,
         )
 
 

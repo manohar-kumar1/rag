@@ -5,7 +5,12 @@ from typing import Literal, Protocol
 from app.answering.citations import Citation
 from app.retrieval.protocol import RetrievedChunk
 
-NOT_FOUND_MESSAGE = "I could not find the answer to that in the uploaded documents."
+DEFAULT_SCOPE = "default"
+NOT_FOUND_MESSAGE ="I could not find the answer to that in the uploaded documents."
+UNVERIFIED_MESSAGE = (
+    "I found related passages but could not verify an answer against them, so I will not "
+    "guess. Try rephrasing the question or check the cited documents directly."
+)
 
 
 @dataclass(frozen=True)
@@ -22,6 +27,10 @@ class Answer:
     sources: list[RetrievedChunk]
     route: str | None = None
     search_query: str | None = None
+    unanswered_parts: tuple[str, ...] = ()
+    grounded: bool | None = None
+    cached: bool = False
+    thread_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +55,8 @@ StreamEvent = SourcesEvent | TokenEvent | DoneEvent
 class Question:
     text: str
     history: Sequence[Turn] = field(default_factory=tuple)
+    thread_id: str | None = None
+    scope: str = DEFAULT_SCOPE
 
 
 class Answerer(Protocol):

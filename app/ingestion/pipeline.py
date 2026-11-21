@@ -10,11 +10,17 @@ from app.exceptions.exception import (
     FileTooLarge,
 )
 from app.ingestion.chunking import Chunker
+from app.ingestion.contextual import Contextualizer, NoContext
 from app.ingestion.detect import MIME_TYPES, FileType, detect_file_type
 from app.ingestion.parsers import ParserRegistry
 from app.ingestion.sources import SourceDocument, SyncResult
 from app.ingestion.status import IngestionStage
-from app.ingestion.store import DocumentStore, NewDocument, NewExternalDocument
+from app.ingestion.store import (
+    ChunkText,
+    DocumentStore,
+    NewDocument,
+    NewExternalDocument,
+)
 
 StageListener = Callable[[IngestionStage], None]
 
@@ -32,7 +38,7 @@ class IngestionResult:
 
 @dataclass(frozen=True)
 class PreparedContent:
-    chunks: list[str]
+    chunks: list[ChunkText]
     vectors: list[list[float]]
 
 
@@ -44,12 +50,14 @@ class IngestionPipeline:
         embedder: Embedder,
         store: DocumentStore,
         max_extracted_chars: int,
+        contextualizer: Contextualizer | None = None,
     ) -> None:
         self._parsers = parsers
         self._chunker = chunker
         self._embedder = embedder
         self._store = store
         self._max_extracted_chars = max_extracted_chars
+        self._contextualizer = contextualizer or NoContext()
 
     def ingest(
         self, data: bytes, source: str, title: str | None = None
@@ -120,11 +128,13 @@ class IngestionPipeline:
     ) -> PreparedContent:
         if len(text) > self._max_extracted_chars:
             raise FileTooLarge("extracted text is too long")
-        chunks = self._chunker.split(text) if text.strip() else []
-        if not chunks:
+        pieces = self._chunker.split(text) if text.strip() else []
+        if not pieces:
             raise EmptyDocumentError
+        contexts = self._contextualizer.contextualize(text, pieces)
+        chunks = [ChunkText(piece, context) for piece, context in zip(pieces, contexts, strict=True)]
         on_stage(IngestionStage.EMBEDDING)
-        return PreparedContent(chunks, self._embed(chunks))
+        return PreparedContent(chunks, self._embed([chunk.embedding_text for chunk in chunks]))
 
     def _embed(self, chunks: list[str]) -> list[list[float]]:
         try:

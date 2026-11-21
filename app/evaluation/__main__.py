@@ -9,6 +9,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from langchain_core.callbacks import get_usage_metadata_callback
+
 from app.composition import build_container
 from app.core.config import Settings, get_settings
 from app.db.connection import create_pool
@@ -65,7 +67,36 @@ def run_metadata(settings: Settings, dataset: Path, files: list[Path]) -> dict:
             "chunk_size": settings.chunk_size,
             "chunk_overlap": settings.chunk_overlap,
         },
+        "features": {
+            "rerank": settings.rerank_model if settings.rerank_enabled else None,
+            "rerank_candidates": settings.rerank_candidates,
+            "rerank_top_n": settings.rerank_top_n,
+            "contextual_chunking": (
+                settings.contextual_model if settings.contextual_chunking_enabled else None
+            ),
+            "groundedness_check": settings.groundedness_check_enabled,
+            "answer_cache": settings.answer_cache_enabled,
+            "agent_max_iterations": settings.agent_max_iterations,
+        },
     }
+
+
+def parse_overrides(pairs: Sequence[str]) -> dict[str, str]:
+    overrides = {}
+    for pair in pairs:
+        name, separator, value = pair.partition("=")
+        if not separator or not name.strip():
+            raise ValueError(f"expected NAME=VALUE, got {pair!r}")
+        overrides[name.strip().lower()] = value
+    return overrides
+
+
+def with_overrides(settings: Settings, pairs: Sequence[str]) -> Settings:
+    overrides = parse_overrides(pairs)
+    unknown = set(overrides) - set(Settings.model_fields)
+    if unknown:
+        raise ValueError(f"unknown settings: {', '.join(sorted(unknown))}")
+    return Settings.model_validate({**settings.model_dump(), **overrides})
 
 
 def evaluate_corpus(
@@ -86,9 +117,15 @@ def evaluate_corpus(
         container = build_container(settings, pool)
         pool.open(wait=True, timeout=settings.db_pool_timeout_seconds)
         try:
-            for path in files:
-                container.ingestion.ingest(path.read_bytes(), source=path.name, title=path.stem)
-            results = asyncio.run(answer_cases(container.answerer, cases))
+            with get_usage_metadata_callback() as ingestion_usage:
+                for path in files:
+                    container.ingestion.ingest(
+                        path.read_bytes(), source=path.name, title=path.stem
+                    )
+            with get_usage_metadata_callback() as answering_usage:
+                results = asyncio.run(answer_cases(container.answerer, cases))
+            report["ingestion_usage"] = ingestion_usage.usage_metadata
+            report["answering_usage"] = answering_usage.usage_metadata
             usage = {}
             if judge_model is not None:
                 from app.evaluation.judge import judge
@@ -113,11 +150,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--skip-judge", action="store_true")
     parser.add_argument("--trace", action="store_true")
+    parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE")
     args = parser.parse_args(argv)
     if not args.corpus.is_dir() or not args.dataset.is_file():
         print("corpus must be a folder and dataset a file", file=sys.stderr)
         return 2
-    settings = get_settings()
+    try:
+        settings = with_overrides(get_settings(), args.set)
+    except ValueError as error:
+        print(f"invalid --set: {error}", file=sys.stderr)
+        return 2
     if not args.skip_judge and not settings.evaluation_configured:
         print("set EVAL_JUDGE_MODEL and EVAL_MAX_WORKERS, or pass --skip-judge", file=sys.stderr)
         return 2

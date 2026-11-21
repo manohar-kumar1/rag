@@ -79,6 +79,17 @@ def create_judge_model(settings: Settings) -> BaseChatModel:
     )
 
 
+def create_contextual_model(settings: Settings) -> Runnable:
+    model = ChatGoogleGenerativeAI(
+        model=settings.contextual_model,
+        google_api_key=settings.google_api_key,
+        max_retries=GOOGLE_SDK_RETRIES_OFF,
+        timeout=settings.llm_timeout_seconds,
+        max_output_tokens=settings.llm_max_output_tokens,
+    )
+    return with_retries(model, retry_policy(settings))
+
+
 def create_decision_model(settings: Settings) -> Runnable:
     return GoogleGenAIClassifier(
         model=settings.google_decision_model,

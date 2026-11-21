@@ -39,9 +39,19 @@ UPDATE_EXTERNAL = (
 LOCK_DOCUMENT = "select content_hash from documents where id = %s for update"
 DELETE_CHUNKS = "delete from chunks where document_id = %s"
 INSERT_CHUNK = (
-    "insert into chunks (document_id, chunk_index, content, embedding) "
-    "values (%s, %s, %s, %s::extensions.vector)"
+    "insert into chunks (document_id, chunk_index, content, context, embedding) "
+    "values (%s, %s, %s, %s, %s::extensions.vector)"
 )
+
+
+@dataclass(frozen=True)
+class ChunkText:
+    content: str
+    context: str | None = None
+
+    @property
+    def embedding_text(self) -> str:
+        return self.content if not self.context else f"{self.context}\n\n{self.content}"
 
 
 @dataclass(frozen=True)
@@ -91,7 +101,7 @@ class DocumentStore(Protocol):
     def add_document(
         self,
         document: NewDocument,
-        chunks: Sequence[str],
+        chunks: Sequence[ChunkText],
         vectors: Sequence[Sequence[float]],
     ) -> StoredDocument: ...
 
@@ -99,7 +109,7 @@ class DocumentStore(Protocol):
         self,
         document_id: int,
         content_hash: str,
-        chunks: Sequence[str],
+        chunks: Sequence[ChunkText],
         vectors: Sequence[Sequence[float]],
     ) -> None: ...
 
@@ -108,7 +118,7 @@ class DocumentStore(Protocol):
     def upsert_external(
         self,
         document: NewExternalDocument,
-        chunks: Sequence[str],
+        chunks: Sequence[ChunkText],
         vectors: Sequence[Sequence[float]],
     ) -> StoredExternal: ...
 
@@ -116,12 +126,12 @@ class DocumentStore(Protocol):
 def insert_chunks(
     conn: psycopg.Connection,
     document_id: int,
-    chunks: Sequence[str],
+    chunks: Sequence[ChunkText],
     vectors: Sequence[Sequence[float]],
 ) -> None:
     rows = [
-        (document_id, index, content, to_vector_literal(vector))
-        for index, (content, vector) in enumerate(zip(chunks, vectors, strict=True))
+        (document_id, index, chunk.content, chunk.context, to_vector_literal(vector))
+        for index, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True))
     ]
     with conn.cursor() as cursor:
         cursor.executemany(INSERT_CHUNK, rows)
@@ -143,7 +153,7 @@ class PostgresDocumentStore:
     def add_document(
         self,
         document: NewDocument,
-        chunks: Sequence[str],
+        chunks: Sequence[ChunkText],
         vectors: Sequence[Sequence[float]],
     ) -> StoredDocument:
         with self._source.connection() as conn:
@@ -173,7 +183,7 @@ class PostgresDocumentStore:
         self,
         document_id: int,
         content_hash: str,
-        chunks: Sequence[str],
+        chunks: Sequence[ChunkText],
         vectors: Sequence[Sequence[float]],
     ) -> None:
         with self._source.connection() as conn, conn.transaction():
@@ -193,7 +203,7 @@ class PostgresDocumentStore:
     def upsert_external(
         self,
         document: NewExternalDocument,
-        chunks: Sequence[str],
+        chunks: Sequence[ChunkText],
         vectors: Sequence[Sequence[float]],
     ) -> StoredExternal:
         with self._source.connection() as conn:

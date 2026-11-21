@@ -13,6 +13,7 @@ class RetrievedChunk:
     score: float
     vector_rank: int | None
     fts_rank: int | None
+    rerank_score: float | None = None
 
 
 class Retriever(Protocol):

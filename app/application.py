@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -8,12 +9,14 @@ from app.api.limits import UploadSizeLimitMiddleware
 from app.api.openapi import document_problem_media_type
 from app.api.routes import v1_router
 from app.api.system import router as system_router
-from app.composition import build_container
+from app.composition import Container, build_container
 from app.core.config import Settings
 from app.core.request_id import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.exceptions.handlers import register_exception_handlers
 from app.ingestion.upload import EXTENSION_TYPES
 from app.observability.tracing import flush
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_METHODS = ["GET", "POST", "DELETE"]
 EXPOSED_HEADERS = ["Location", "Retry-After", "Idempotent-Replayed", REQUEST_ID_HEADER]
@@ -30,12 +33,22 @@ def describe(settings: Settings) -> str:
     )
 
 
+def prune_conversations(container: Container, retention_seconds: float) -> None:
+    try:
+        removed = container.conversations.prune(retention_seconds)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("conversation pruning failed: %s", type(error).__name__)
+        return
+    logger.info("pruned %s expired conversation turns", removed)
+
+
 def create_app(settings: Settings) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         container = build_container(settings)
         container.pool.open(wait=True, timeout=settings.db_pool_timeout_seconds)
         app.state.container = container
+        prune_conversations(container, settings.conversation_retention_seconds)
         if settings.worker_enabled:
             container.worker.start()
         try:

@@ -1,3 +1,4 @@
+import re
 from functools import lru_cache
 from typing import Literal
 
@@ -55,6 +56,23 @@ class Settings(BaseSettings):
     llm_retry_initial_seconds: float
     llm_retry_max_seconds: float
     decision_timeout_seconds: float
+    agent_max_subquestions: int
+    agent_max_iterations: int
+    agent_max_rewrites: int
+    agent_grade_threshold: float
+    mask_patterns: dict[str, str]
+    groundedness_check_enabled: bool
+    groundedness_threshold: float
+    conversation_max_turns: int
+    conversation_retention_seconds: float
+    rerank_enabled: bool
+    rerank_candidates: int
+    rerank_top_n: int
+    contextual_chunking_enabled: bool
+    answer_cache_enabled: bool
+    answer_cache_store: Literal["postgres", "memory"]
+    answer_cache_ttl_seconds: float
+    answer_cache_semantic_threshold: float
     langsmith_tracing: bool
     google_api_key: str
     google_model: str
@@ -66,6 +84,38 @@ class Settings(BaseSettings):
     langsmith_endpoint: str | None = None
     eval_judge_model: str | None = None
     eval_max_workers: int | None = None
+    rerank_model: str | None = None
+    contextual_model: str | None = None
+
+    @model_validator(mode="after")
+    def validate_answering_features(self) -> "Settings":
+        if min(self.agent_max_subquestions, self.agent_max_iterations) < 1:
+            raise ValueError("agent sub-question and iteration caps must be at least 1")
+        if self.agent_max_rewrites < 0:
+            raise ValueError("agent rewrites must not be negative")
+        probabilities = (
+            self.agent_grade_threshold,
+            self.groundedness_threshold,
+            self.answer_cache_semantic_threshold,
+        )
+        if not all(0 < value < 1 for value in probabilities):
+            raise ValueError("grade, groundedness and cache thresholds must be between 0 and 1")
+        if self.conversation_max_turns < 1 or self.conversation_retention_seconds <= 0:
+            raise ValueError("conversation turns and retention must be positive")
+        if not 1 <= self.rerank_top_n <= self.rerank_candidates <= MAX_VECTOR_CANDIDATES:
+            raise ValueError("rerank counts must satisfy 1 <= top_n <= candidates")
+        if self.rerank_enabled and not self.rerank_model:
+            raise ValueError("RERANK_MODEL is required when reranking is enabled")
+        if self.contextual_chunking_enabled and not self.contextual_model:
+            raise ValueError("CONTEXTUAL_MODEL is required when contextual chunking is enabled")
+        if self.answer_cache_ttl_seconds <= 0:
+            raise ValueError("answer cache ttl must be positive")
+        for name, pattern in self.mask_patterns.items():
+            try:
+                re.compile(pattern)
+            except re.error as error:
+                raise ValueError(f"mask pattern {name} is not a valid regex") from error
+        return self
 
     @model_validator(mode="after")
     def validate_pool_bounds(self) -> "Settings":
