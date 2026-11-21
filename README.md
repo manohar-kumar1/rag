@@ -12,6 +12,10 @@ A document ingestion service for retrieval-augmented generation. Upload PDF, DOC
 - Duplicate detection by file content, so the same file is never ingested twice
 - Originals kept in a private Supabase Storage bucket
 - Hybrid retrieval in one SQL statement: HNSW cosine vector search and Postgres full-text search, fused with Reciprocal Rank Fusion, with weights, candidate counts and result count as settings
+- Cited answers from the documents only, as JSON or a server-sent event stream, with an explicit "not found" instead of invented answers
+- A LangGraph pipeline that routes each question with Google's decision model and rewrites follow-ups into standalone search queries
+- Retries with backoff on rate limits, and an optional Anthropic fallback model
+- LangSmith tracing with secrets and model reasoning removed, and a RAGAS evaluation command
 - Configurable limits for upload size, PDF pages, extracted text and DOCX expansion
 - Versioned API under `/v1`: uploads return `202` with a job to poll, lists use cursors, and a retried upload can carry an `Idempotency-Key`
 - Every error is an RFC 9457 `application/problem+json` document, with no internal detail on server errors
@@ -148,6 +152,23 @@ Changing the embedding model or dimension means re-embedding every document.
 | `GOOGLE_DECISION_MODEL` | Model used for routing decisions |
 | `ANTHROPIC_API_KEY` | Optional. Enables the fallback chat model together with the model name |
 | `ANTHROPIC_MODEL` | Optional. Fallback chat model name |
+| `LLM_TIMEOUT_SECONDS` | Timeout for one model call |
+| `LLM_MAX_OUTPUT_TOKENS` | Cap on the tokens a model may generate per call |
+| `LLM_MAX_RETRIES` | Retries after the first attempt for rate limits and other retryable model errors, before the fallback |
+| `LLM_RETRY_INITIAL_SECONDS` | First backoff delay. Later delays grow exponentially with jitter |
+| `LLM_RETRY_MAX_SECONDS` | Longest backoff delay |
+| `DECISION_TIMEOUT_SECONDS` | Timeout for one routing decision call |
+
+### Tracing and evaluation
+
+| Variable | Description |
+|---|---|
+| `LANGSMITH_TRACING` | `true` sends a trace of every question to LangSmith |
+| `LANGSMITH_API_KEY` | LangSmith API key. Required only when tracing is on |
+| `LANGSMITH_PROJECT` | LangSmith project that receives the traces. Required only when tracing is on |
+| `LANGSMITH_ENDPOINT` | LangSmith API URL, for example the US or EU endpoint. Required only when tracing is on |
+| `EVAL_JUDGE_MODEL` | Optional. Google model that scores answers during evaluation |
+| `EVAL_MAX_WORKERS` | Optional. Parallel judge calls during evaluation. Keep it low on a free tier |
 
 ## API
 
@@ -161,8 +182,36 @@ Interactive documentation is served at `/docs` when `DOCS_ENABLED=true`, and the
 | `GET /v1/documents/{id}` | Get one document | `200` |
 | `POST /v1/documents/{id}/retry` | Re-queue a `failed` document | `202` with `Location` |
 | `DELETE /v1/documents/{id}` | Delete the document, its chunks and its stored original | `204` |
+| `POST /v1/query` | Ask a question, get a cited answer | `200` |
+| `POST /v1/query/stream` | Ask a question, stream the answer as server-sent events | `200` with `text/event-stream` |
 | `GET /healthz` | Liveness probe, checks nothing else | `200` |
 | `GET /readyz` | Readiness probe, checks the database and storage | `200`, or `503` |
+
+### Ask a question
+
+```bash
+curl -X POST http://localhost:8000/v1/query -H "Content-Type: application/json" \
+  -d '{"question": "And for Premium?", "history": [{"role": "user", "content": "Does Basic support have a seat limit?"}, {"role": "assistant", "content": "Yes, up to 5 seats [1]."}]}'
+```
+
+```json
+{
+  "answer": "Premium support covers up to 50 user seats [1].",
+  "answered": true,
+  "citations": [
+    {"marker": 1, "chunk_id": 42, "document_id": 7, "source": "support-plans.md", "title": "support-plans", "chunk_index": 0, "text": "..."}
+  ],
+  "route": "simple",
+  "search_query": "What is the seat limit for Premium support?"
+}
+```
+
+- The answer uses only the uploaded documents. When they do not contain the answer, `answered` is `false` and the answer says so.
+- Numbers in square brackets in the answer are the `marker` of a citation.
+- `history` holds up to 20 earlier turns. It is used only to rewrite a follow-up such as "And for Premium?" into a standalone search query, which is returned as `search_query`.
+- `route` is `simple` or `complex`. Complex questions currently use the same path as simple ones.
+
+The streaming endpoint sends `sources` (the numbered passages) first, then `token` events with answer text, then `done` with the same body as `POST /v1/query`. If something fails after the stream started, the last event is `error` with a problem document. Stopping the request stops generation.
 
 ### Upload a document
 
@@ -277,6 +326,19 @@ uv run python -m app.ingestion.cli ./report.pdf
 
 This writes to the database that `.env` points at.
 
+### Evaluating answer quality
+
+```bash
+uv sync --group eval
+uv run python -m app.evaluation --corpus ../eval/corpus --dataset ../eval/dataset.jsonl --out ../eval/results/run.json
+```
+
+Creates a throwaway database schema, ingests every supported file in the corpus folder, answers each question through the real question pipeline, scores the answers with RAGAS (faithfulness, context precision, context recall, answer relevancy) using `EVAL_JUDGE_MODEL`, writes a JSON report and drops the schema. The dataset is JSON lines with `id`, `question`, `reference`, `route` (`simple` or `complex`), `answerable` and `sources`, plus optional `history` and `follow_up` for follow-up questions. Add `--skip-judge` to check answers without spending judge calls. Evaluation runs are not traced unless you add `--trace`, so they stay out of the production LangSmith project. Each run calls the primary model, Jina and the judge, so it uses quota.
+
+### Tracing
+
+Set `LANGSMITH_TRACING=true` with a LangSmith key and project. Each question becomes one trace named `answer_question` with the routing decision, the rewrite, the `hybrid_search` retrieval and the model call. Reasoning blocks and secrets are removed before anything is sent. The question, history, retrieved passages and answer are sent, so treat LangSmith as a processor of document text.
+
 ### Searching from the command line
 
 ```bash
@@ -318,7 +380,8 @@ Checklist:
 
 ## Limitations
 
-- Retrieval is available in code and from the command line. The ask endpoint, answering and chat are not built yet
+- Complex questions use the same retrieve-then-answer path as simple ones until the agent loop exists
+- Conversations are not stored on the server. The client sends recent turns with each question
 - Retrieval searches every document, with no per-user filter yet
 - There is no authentication or per-user access control yet
 - Documents are shared by everyone who can reach the API

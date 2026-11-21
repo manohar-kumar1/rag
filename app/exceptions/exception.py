@@ -33,6 +33,24 @@ class NotReady(AppError):
         return self.message
 
 
+class DecisionError(AppError):
+    status_code = 502
+    code = "decision_failed"
+    public_message = "routing service unavailable"
+
+
+class JudgeUnavailable(AppError):
+    status_code = 502
+    code = "judge_unavailable"
+    public_message = "evaluation judge unavailable"
+
+
+class GenerationError(AppError):
+    status_code = 502
+    code = "generation_failed"
+    public_message = "answer service unavailable"
+
+
 class InvalidQuery(AppError):
     status_code = 422
     code = "invalid_query"

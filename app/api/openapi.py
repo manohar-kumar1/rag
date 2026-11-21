@@ -2,8 +2,13 @@ from fastapi import FastAPI
 
 from app.exceptions.handlers import PROBLEM_MEDIA_TYPE
 
-JSON_MEDIA_TYPE = "application/json"
 FIRST_ERROR_STATUS = 400
+
+
+def as_problem_content(content: dict) -> dict:
+    if not content or PROBLEM_MEDIA_TYPE in content:
+        return content
+    return {PROBLEM_MEDIA_TYPE: next(iter(content.values()))}
 
 
 def document_problem_media_type(app: FastAPI) -> None:
@@ -15,9 +20,7 @@ def document_problem_media_type(app: FastAPI) -> None:
             for operation in operations.values():
                 for status, response in operation.get("responses", {}).items():
                     if status.isdigit() and int(status) >= FIRST_ERROR_STATUS:
-                        content = response.get("content", {})
-                        if JSON_MEDIA_TYPE in content:
-                            content[PROBLEM_MEDIA_TYPE] = content.pop(JSON_MEDIA_TYPE)
+                        response["content"] = as_problem_content(response.get("content", {}))
         return schema
 
     app.openapi = openapi

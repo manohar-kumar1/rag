@@ -7,9 +7,10 @@ def to_psycopg_dsn(database_url: str) -> str:
     return database_url.replace("postgresql+psycopg://", "postgresql://", 1)
 
 
-def create_pool(settings: Settings) -> ConnectionPool:
+def create_pool(settings: Settings, search_path: str | None = None) -> ConnectionPool:
     return ConnectionPool(
         to_psycopg_dsn(settings.database_url),
+        kwargs={"options": f"-c search_path={search_path}"} if search_path else None,
         min_size=settings.db_pool_min_size,
         max_size=settings.db_pool_max_size,
         max_lifetime=settings.db_pool_max_lifetime_seconds,

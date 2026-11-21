@@ -49,11 +49,23 @@ class Settings(BaseSettings):
     job_retry_after_seconds: int
     idempotency_ttl_seconds: float
     idempotency_lock_seconds: float
+    llm_timeout_seconds: float
+    llm_max_output_tokens: int
+    llm_max_retries: int
+    llm_retry_initial_seconds: float
+    llm_retry_max_seconds: float
+    decision_timeout_seconds: float
+    langsmith_tracing: bool
     google_api_key: str
     google_model: str
     google_decision_model: str
     anthropic_api_key: str | None = None
     anthropic_model: str | None = None
+    langsmith_api_key: str | None = None
+    langsmith_project: str | None = None
+    langsmith_endpoint: str | None = None
+    eval_judge_model: str | None = None
+    eval_max_workers: int | None = None
 
     @model_validator(mode="after")
     def validate_pool_bounds(self) -> "Settings":
@@ -102,6 +114,27 @@ class Settings(BaseSettings):
                 "retrieval counts must be at least 1 and vector candidates at most "
                 f"{MAX_VECTOR_CANDIDATES}"
             )
+        if self.eval_max_workers is not None and self.eval_max_workers < 1:
+            raise ValueError("eval max workers must be at least 1")
+        tracing_values = (
+            self.langsmith_api_key,
+            self.langsmith_project,
+            self.langsmith_endpoint,
+        )
+        if self.langsmith_tracing and not all(tracing_values):
+            raise ValueError(
+                "tracing needs LANGSMITH_API_KEY, LANGSMITH_PROJECT and LANGSMITH_ENDPOINT"
+            )
+        if self.decision_timeout_seconds <= 0:
+            raise ValueError("decision timeout must be positive")
+        if self.llm_timeout_seconds <= 0 or self.llm_max_output_tokens < 1:
+            raise ValueError("llm timeout must be positive and max output tokens at least 1")
+        if self.llm_max_retries < 0 or not (
+            0 < self.llm_retry_initial_seconds <= self.llm_retry_max_seconds
+        ):
+            raise ValueError(
+                "llm retries must not be negative and 0 < initial delay <= max delay"
+            )
         if self.job_retry_after_seconds < 1:
             raise ValueError("job retry-after must be at least 1 second")
         if self.idempotency_ttl_seconds <= 0 or self.idempotency_lock_seconds <= 0:
@@ -115,6 +148,10 @@ class Settings(BaseSettings):
         return [
             origin.strip() for origin in self.cors_origins.split(",") if origin.strip()
         ]
+
+    @property
+    def evaluation_configured(self) -> bool:
+        return bool(self.eval_judge_model and self.eval_max_workers)
 
     @property
     def anthropic_fallback_enabled(self) -> bool:

@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from app.answering.protocol import Answerer
 from app.composition import Container
 from app.core.readiness import ReadinessChecker
 from app.ingestion.documents import DocumentService
@@ -35,6 +36,10 @@ def get_readiness(
     container: Annotated[Container, Depends(get_container)],
 ) -> ReadinessChecker:
     return container.readiness
+
+
+def get_answerer(container: Annotated[Container, Depends(get_container)]) -> Answerer:
+    return container.answerer
 
 
 def get_job_retry_after(request: Request) -> int:

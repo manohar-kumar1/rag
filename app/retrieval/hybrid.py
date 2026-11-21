@@ -1,13 +1,15 @@
 import re
 from dataclasses import dataclass
 
+import psycopg
 from psycopg.rows import class_row
+from psycopg_pool import PoolTimeout
 
 from app.db.schema import FULL_TEXT_LANGUAGE
 from app.db.source import ConnectionSource
 from app.db.vector import to_vector_literal
 from app.embeddings.protocol import Embedder
-from app.exceptions.exception import InvalidQuery
+from app.exceptions.exception import DatabaseUnavailable, InvalidQuery
 from app.retrieval.protocol import RetrievedChunk
 
 DEFAULT_HNSW_EF_SEARCH = 40
@@ -91,6 +93,12 @@ class PostgresHybridRetriever:
             "fts_candidates": self._config.fts_candidates,
             "top_k": self._config.top_k,
         }
+        try:
+            return self._search(params)
+        except (psycopg.OperationalError, PoolTimeout) as error:
+            raise DatabaseUnavailable from error
+
+    def _search(self, params: dict) -> list[RetrievedChunk]:
         ef_search = max(DEFAULT_HNSW_EF_SEARCH, self._config.vector_candidates)
         with (
             self._source.connection() as conn,

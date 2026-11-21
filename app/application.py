@@ -13,6 +13,7 @@ from app.core.config import Settings
 from app.core.request_id import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.exceptions.handlers import register_exception_handlers
 from app.ingestion.upload import EXTENSION_TYPES
+from app.observability.tracing import flush
 
 ALLOWED_METHODS = ["GET", "POST", "DELETE"]
 EXPOSED_HEADERS = ["Location", "Retry-After", "Idempotent-Replayed", REQUEST_ID_HEADER]
@@ -41,6 +42,7 @@ def create_app(settings: Settings) -> FastAPI:
             yield
         finally:
             container.worker.stop()
+            flush(container.tracing)
             container.pool.close()
 
     app = FastAPI(
