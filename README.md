@@ -11,7 +11,7 @@ A document ingestion service for retrieval-augmented generation. Upload PDF, DOC
 - Background ingestion that survives restarts, with `pending`, `processing`, `ready` and `failed` document states
 - Duplicate detection by file content, so the same file is never ingested twice
 - Originals kept in a private Supabase Storage bucket
-- Hybrid-search-ready schema: vector column with an HNSW cosine index and a full-text column with a GIN index
+- Hybrid retrieval in one SQL statement: HNSW cosine vector search and Postgres full-text search, fused with Reciprocal Rank Fusion, with weights, candidate counts and result count as settings
 - Configurable limits for upload size, PDF pages, extracted text and DOCX expansion
 - Versioned API under `/v1`: uploads return `202` with a job to poll, lists use cursors, and a retried upload can carry an `Idempotency-Key`
 - Every error is an RFC 9457 `application/problem+json` document, with no internal detail on server errors
@@ -132,6 +132,12 @@ Changing the embedding model or dimension means re-embedding every document.
 | `JOB_RETRY_AFTER_SECONDS` | Polling hint sent in the `Retry-After` header while a job is unfinished |
 | `IDEMPOTENCY_TTL_SECONDS` | How long a finished `Idempotency-Key` is remembered |
 | `IDEMPOTENCY_LOCK_SECONDS` | How long a key counts as in progress if the first request never finishes |
+| `RRF_K` | Reciprocal Rank Fusion constant. Larger values flatten the difference between ranks |
+| `RETRIEVAL_VECTOR_WEIGHT` | Weight of the vector search in the fused score. `0` switches that side off |
+| `RETRIEVAL_FTS_WEIGHT` | Weight of the full-text search in the fused score. `0` switches that side off |
+| `RETRIEVAL_VECTOR_CANDIDATES` | Chunks the vector search contributes before fusion, at most 1000 |
+| `RETRIEVAL_FTS_CANDIDATES` | Chunks the full-text search contributes before fusion |
+| `RETRIEVAL_TOP_K` | Chunks returned after fusion |
 
 ### Language models
 
@@ -271,6 +277,14 @@ uv run python -m app.ingestion.cli ./report.pdf
 
 This writes to the database that `.env` points at.
 
+### Searching from the command line
+
+```bash
+uv run python -m app.retrieval.cli "what do house cats do all day?"
+```
+
+Prints the top chunks with their fused score and the rank each side gave them. A chunk found by only one side shows `None` for the other. The vector side finds meaning, so a paraphrase matches. The keyword side finds exact terms, so an identifier such as `RB-90417` matches even when its embedding is unremarkable. The keyword side matches any word of the query, so long questions still find something. This reads from the database that `.env` points at.
+
 ### Running more than one instance
 
 Each instance with `WORKER_ENABLED=true` runs its own worker, and row locking keeps them from claiming the same document. To scale the API without extra workers, leave the flag off on those instances.
@@ -304,7 +318,8 @@ Checklist:
 
 ## Limitations
 
-- Retrieval, answering and chat are not built yet
+- Retrieval is available in code and from the command line. The ask endpoint, answering and chat are not built yet
+- Retrieval searches every document, with no per-user filter yet
 - There is no authentication or per-user access control yet
 - Documents are shared by everyone who can reach the API
 - Scanned and image-based documents are not supported

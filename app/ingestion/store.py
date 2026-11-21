@@ -1,11 +1,11 @@
 from collections.abc import Sequence
-from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Protocol
 
 import psycopg
 from psycopg.types.json import Jsonb
 
+from app.db.source import ConnectionSource
 from app.db.vector import to_vector_literal
 from app.exceptions.exception import ContentMismatch, DocumentNotFound
 from app.ingestion.sources import SyncOutcome
@@ -83,10 +83,6 @@ class StoredExternal:
     id: int
     chunk_count: int
     outcome: SyncOutcome
-
-
-class ConnectionSource(Protocol):
-    def connection(self) -> AbstractContextManager[psycopg.Connection]: ...
 
 
 class DocumentStore(Protocol):

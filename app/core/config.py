@@ -4,6 +4,8 @@ from typing import Literal
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+MAX_VECTOR_CANDIDATES = 1000
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
@@ -37,6 +39,12 @@ class Settings(BaseSettings):
     worker_concurrency: int
     worker_stale_after_seconds: float
     cors_origins: str
+    rrf_k: int
+    retrieval_vector_weight: float
+    retrieval_fts_weight: float
+    retrieval_vector_candidates: int
+    retrieval_fts_candidates: int
+    retrieval_top_k: int
     docs_enabled: bool
     job_retry_after_seconds: int
     idempotency_ttl_seconds: float
@@ -79,6 +87,21 @@ class Settings(BaseSettings):
             or self.worker_stale_after_seconds <= 0
         ):
             raise ValueError("worker intervals must be positive")
+        if self.rrf_k < 1:
+            raise ValueError("rrf k must be at least 1")
+        weights = (self.retrieval_vector_weight, self.retrieval_fts_weight)
+        if min(weights) < 0 or max(weights) <= 0:
+            raise ValueError("retrieval weights must not be negative and not both zero")
+        counts = (
+            self.retrieval_vector_candidates,
+            self.retrieval_fts_candidates,
+            self.retrieval_top_k,
+        )
+        if min(counts) < 1 or self.retrieval_vector_candidates > MAX_VECTOR_CANDIDATES:
+            raise ValueError(
+                "retrieval counts must be at least 1 and vector candidates at most "
+                f"{MAX_VECTOR_CANDIDATES}"
+            )
         if self.job_retry_after_seconds < 1:
             raise ValueError("job retry-after must be at least 1 second")
         if self.idempotency_ttl_seconds <= 0 or self.idempotency_lock_seconds <= 0:

@@ -3,9 +3,9 @@ from enum import StrEnum
 from hashlib import sha256
 from typing import Protocol
 
+from app.db.source import ConnectionSource
 from app.exceptions.exception import IdempotencyKeyInProgress, IdempotencyKeyReused
 from app.ingestion.repository import DocumentRepository
-from app.ingestion.store import ConnectionSource
 from app.ingestion.upload import UploadResult
 
 DELETE_EXPIRED = "delete from idempotency_keys where key = %s and expires_at < now()"

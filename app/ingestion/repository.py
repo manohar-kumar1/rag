@@ -3,10 +3,10 @@ from typing import Protocol
 import psycopg
 from psycopg.rows import class_row
 
+from app.db.source import ConnectionSource
 from app.exceptions.exception import DocumentNotFound, DocumentNotRetryable
 from app.ingestion.records import DocumentRecord, NewUpload
 from app.ingestion.status import IngestionStage
-from app.ingestion.store import ConnectionSource
 
 COLUMNS = (
     "id, source, title, content_hash, status, error, original_filename, content_type, "

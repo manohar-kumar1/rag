@@ -33,6 +33,14 @@ class NotReady(AppError):
         return self.message
 
 
+class InvalidQuery(AppError):
+    status_code = 422
+    code = "invalid_query"
+
+    def __init__(self) -> None:
+        super().__init__("query must not be empty")
+
+
 class InvalidCursor(AppError):
     status_code = 400
     code = "invalid_cursor"

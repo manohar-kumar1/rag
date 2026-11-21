@@ -21,6 +21,8 @@ from app.ingestion.sync import SourceSyncer
 from app.ingestion.upload import UploadService
 from app.ingestion.worker import IngestionWorker
 from app.llm.factory import create_chat_model
+from app.retrieval.hybrid import PostgresHybridRetriever, RetrievalConfig
+from app.retrieval.protocol import Retriever
 from app.storage.factory import create_file_store
 from app.storage.protocol import FileStore
 
@@ -37,6 +39,7 @@ class Container:
     worker: IngestionWorker
     document_service: DocumentService
     jobs: JobService
+    retriever: Retriever
     readiness: ReadinessChecker
     syncer: SourceSyncer
 
@@ -73,6 +76,18 @@ def build_container(settings: Settings) -> Container:
         ),
         document_service=DocumentService(documents, files),
         jobs=JobService(documents),
+        retriever=PostgresHybridRetriever(
+            pool,
+            embedder,
+            RetrievalConfig(
+                rrf_k=settings.rrf_k,
+                vector_weight=settings.retrieval_vector_weight,
+                fts_weight=settings.retrieval_fts_weight,
+                vector_candidates=settings.retrieval_vector_candidates,
+                fts_candidates=settings.retrieval_fts_candidates,
+                top_k=settings.retrieval_top_k,
+            ),
+        ),
         readiness=ReadinessChecker(
             {
                 "database": database_probe(pool, settings.db_pool_timeout_seconds),
