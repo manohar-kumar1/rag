@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     rerank_enabled: bool
     rerank_candidates: int
     rerank_top_n: int
+    rerank_max_retries: int
+    rerank_retry_backoff_seconds: float
     contextual_chunking_enabled: bool
     answer_cache_enabled: bool
     answer_cache_store: Literal["postgres", "memory"]
@@ -104,6 +106,8 @@ class Settings(BaseSettings):
             raise ValueError("conversation turns and retention must be positive")
         if not 1 <= self.rerank_top_n <= self.rerank_candidates <= MAX_VECTOR_CANDIDATES:
             raise ValueError("rerank counts must satisfy 1 <= top_n <= candidates")
+        if self.rerank_max_retries < 0 or self.rerank_retry_backoff_seconds < 0:
+            raise ValueError("rerank retries and backoff must not be negative")
         if self.rerank_enabled and not self.rerank_model:
             raise ValueError("RERANK_MODEL is required when reranking is enabled")
         if self.contextual_chunking_enabled and not self.contextual_model:

@@ -48,7 +48,13 @@ class DoneEvent:
     answer: Answer
 
 
-StreamEvent = SourcesEvent | TokenEvent | DoneEvent
+@dataclass(frozen=True)
+class ProgressEvent:
+    step: str
+    status: Literal["running", "done"]
+
+
+StreamEvent = SourcesEvent | TokenEvent | DoneEvent | ProgressEvent
 
 
 @dataclass(frozen=True)
@@ -57,6 +63,13 @@ class Question:
     history: Sequence[Turn] = field(default_factory=tuple)
     thread_id: str | None = None
     scope: str = DEFAULT_SCOPE
+    document_ids: tuple[int, ...] = ()
+
+    @property
+    def cache_scope(self) -> str:
+        if not self.document_ids:
+            return self.scope
+        return f"{self.scope}|documents:" + ",".join(str(i) for i in sorted(set(self.document_ids)))
 
 
 class Answerer(Protocol):

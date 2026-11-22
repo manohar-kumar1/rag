@@ -75,8 +75,18 @@ def ensure_private_bucket(
     try:
         existing = client.get(f"/bucket/{name}")
         if existing.status_code == 200:
-            if existing.json().get("public"):
+            current = existing.json()
+            if current.get("public"):
                 raise StorageError(f"bucket {bucket} is public and must be private")
+            if current.get("file_size_limit") != max_file_bytes:
+                updated = client.put(
+                    f"/bucket/{name}",
+                    json={"public": False, "file_size_limit": max_file_bytes},
+                )
+                if not updated.is_success:
+                    raise StorageError(
+                        f"bucket update failed with status {updated.status_code}"
+                    )
             return False
         created = client.post(
             "/bucket",

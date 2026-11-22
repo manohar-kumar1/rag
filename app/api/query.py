@@ -8,6 +8,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from app.answering.protocol import (
     Answerer,
     DoneEvent,
+    ProgressEvent,
     SourcesEvent,
     StreamEvent,
     TokenEvent,
@@ -16,7 +17,7 @@ from app.api.dependencies import get_answerer
 from app.api.errors import error_responses
 from app.exceptions.exception import AppError
 from app.exceptions.handlers import app_error_body, unexpected_error_body
-from app.models.query import QueryIn, QueryOut, SourcesOut, TokenOut
+from app.models.query import ProgressOut, QueryIn, QueryOut, SourcesOut, TokenOut
 
 router = APIRouter(prefix="/query", tags=["query"])
 
@@ -42,7 +43,7 @@ async def query(
     response_class=EventSourceResponse,
     summary="Ask a question and stream the answer as server-sent events",
     description=(
-        "Event order: `sources` (the passages, numbered by marker), then `token` events with "
+        "Event order: `progress` events as each step starts and ends, `sources` (the passages, numbered by marker), then `token` events with "
         "answer text, then `done` with the final answer and citations. A failure after the "
         "stream started is sent as an `error` event holding a problem document."
     ),
@@ -71,5 +72,7 @@ def to_server_sent_event(event: StreamEvent) -> ServerSentEvent:
             return ServerSentEvent(event="sources", data=SourcesOut.from_chunks(sources))
         case TokenEvent(text):
             return ServerSentEvent(event="token", data=TokenOut(text=text))
+        case ProgressEvent(step, status):
+            return ServerSentEvent(event="progress", data=ProgressOut(step=step, status=status))
         case DoneEvent(answer):
             return ServerSentEvent(event="done", data=QueryOut.from_answer(answer))

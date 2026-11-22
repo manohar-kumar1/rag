@@ -9,7 +9,7 @@ from app.exceptions.exception import (
     EmptyDocumentError,
     FileTooLarge,
 )
-from app.ingestion.chunking import Chunker
+from app.ingestion.chunking import PAGE_BREAK, Chunker, page_at
 from app.ingestion.contextual import Contextualizer, NoContext
 from app.ingestion.detect import MIME_TYPES, FileType, detect_file_type
 from app.ingestion.parsers import ParserRegistry
@@ -128,11 +128,20 @@ class IngestionPipeline:
     ) -> PreparedContent:
         if len(text) > self._max_extracted_chars:
             raise FileTooLarge("extracted text is too long")
-        pieces = self._chunker.split(text) if text.strip() else []
-        if not pieces:
+        spans = self._chunker.spans(text) if text.strip() else []
+        if not spans:
             raise EmptyDocumentError
+        pieces = [span.text.replace(PAGE_BREAK, "") for span in spans]
         contexts = self._contextualizer.contextualize(text, pieces)
-        chunks = [ChunkText(piece, context) for piece, context in zip(pieces, contexts, strict=True)]
+        chunks = [
+            ChunkText(
+                piece,
+                context,
+                page_start=page_at(text, span.start),
+                page_end=page_at(text, span.start + len(span.text) - 1),
+            )
+            for piece, context, span in zip(pieces, contexts, spans, strict=True)
+        ]
         on_stage(IngestionStage.EMBEDDING)
         return PreparedContent(chunks, self._embed([chunk.embedding_text for chunk in chunks]))
 

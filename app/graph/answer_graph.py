@@ -15,12 +15,14 @@ from app.answering.protocol import (
     UNVERIFIED_MESSAGE,
     Answer,
     DoneEvent,
+    ProgressEvent,
     Question,
     SourcesEvent,
     StreamEvent,
     TokenEvent,
 )
 from app.answering.service import answer_events, final_answer
+from app.exceptions.exception import GenerationError
 from app.retrieval.protocol import RetrievedChunk, Retriever
 from app.routing.planning import LlmPlanner
 from app.routing.protocol import Grader, Route, RouteDecider
@@ -95,6 +97,17 @@ def with_gaps(question: str, unanswered: Sequence[str]) -> str:
     )
 
 
+def reported(step: str, node):
+    async def run(state: AnswerState) -> AnswerState:
+        write = get_stream_writer()
+        write(ProgressEvent(step, "running"))
+        update = await node(state)
+        write(ProgressEvent(step, "done"))
+        return update
+
+    return run
+
+
 def build_answer_graph(
     components: AnswerComponents, policy: AgentPolicy
 ) -> CompiledStateGraph:
@@ -122,7 +135,9 @@ def build_answer_graph(
         return {}
 
     async def retrieve(state: AnswerState) -> AnswerState:
-        sources = await asyncio.to_thread(retriever.retrieve, state["search_query"])
+        sources = await asyncio.to_thread(
+            retriever.retrieve, state["search_query"], state["question"].document_ids
+        )
         get_stream_writer()(SourcesEvent(sources))
         return {"sources": sources}
 
@@ -144,7 +159,9 @@ def build_answer_graph(
         }
 
     async def research(state: AnswerState) -> AnswerState:
-        found = await asyncio.to_thread(retriever.retrieve, state["query"])
+        found = await asyncio.to_thread(
+            retriever.retrieve, state["query"], state["question"].document_ids
+        )
         sub_question = state["sub_questions"][state["current"]]
         sufficient = await is_sufficient(sub_question, found)
         update: AnswerState = {"iterations": state["iterations"] + 1, "sufficient": sufficient}
@@ -210,9 +227,9 @@ def build_answer_graph(
         question = with_gaps(
             question_to_answer(state["question"].text, state["search_query"]), unanswered
         )
-        answer = await final_answer(
-            forward_tokens(answer_events(generator, question, state["sources"]), write)
-        )
+        events = answer_events(generator, question, state["sources"])
+        shown = events if policy.groundedness_enabled else forward_tokens(events, write)
+        answer = await final_answer(shown)
         return {
             "answer": replace(
                 answer,
@@ -222,39 +239,43 @@ def build_answer_graph(
             )
         }
 
-    async def check(state: AnswerState) -> AnswerState:
-        answer = state["answer"]
-        if not policy.groundedness_enabled or not answer.answered:
-            return {}
+    async def verified(answer: Answer) -> Answer:
+        if not answer.answered:
+            return answer
         cited = [citation.chunk.content for citation in answer.citations]
         passages = cited or [chunk.content for chunk in answer.sources]
         try:
             score = await asyncio.to_thread(grader.groundedness, answer.text, passages)
         except Exception as error:  # noqa: BLE001
             logger.warning("groundedness check failed: %s", type(error).__name__)
-            return {}
+            return answer
         if score >= policy.groundedness_threshold:
-            return {"answer": replace(answer, grounded=True)}
+            return replace(answer, grounded=True)
         logger.info("answer replaced after failing the groundedness check (%.2f)", score)
-        return {
-            "answer": replace(
-                answer, text=UNVERIFIED_MESSAGE, answered=False, citations=[], grounded=False
-            )
-        }
+        return replace(
+            answer, text=UNVERIFIED_MESSAGE, answered=False, citations=[], grounded=False
+        )
+
+    async def check(state: AnswerState) -> AnswerState:
+        if not policy.groundedness_enabled:
+            return {}
+        answer = await verified(state["answer"])
+        get_stream_writer()(TokenEvent(answer.text))
+        return {"answer": answer}
 
     builder = StateGraph(AnswerState)
     for name, node in {
-        "classify": classify,
+        "classify": reported("classify", classify),
         "rewrite": rewrite,
         "dispatch": dispatch,
-        "retrieve": retrieve,
-        "plan": plan,
-        "research": research,
+        "retrieve": reported("retrieve", retrieve),
+        "plan": reported("plan", plan),
+        "research": reported("research", research),
         "reformulate": reformulate,
         "advance": advance,
         "synthesize": synthesize,
-        "generate": generate,
-        "check": check,
+        "generate": reported("generate", generate),
+        "check": reported("check", check) if policy.groundedness_enabled else check,
     }.items():
         builder.add_node(name, node)
     builder.add_edge(START, "classify")
@@ -295,14 +316,21 @@ class GraphAnswerer:
         return state["answer"]
 
     async def stream(self, question: Question) -> AsyncIterator[StreamEvent]:
-        final: AnswerState = {}
-        updates = self._graph.astream(
-            {"question": question}, self._config, stream_mode=["custom", "values"]
+        answer: Answer | None = None
+        chunks = self._graph.astream(
+            {"question": question},
+            self._config,
+            stream_mode=["custom", "updates"],
+            version="v2",
         )
-        async with aclosing(updates):
-            async for mode, payload in updates:
-                if mode == "custom":
-                    yield payload
-                else:
-                    final = payload
-        yield DoneEvent(final["answer"])
+        async with aclosing(chunks):
+            async for chunk in chunks:
+                if chunk["type"] == "custom":
+                    yield chunk["data"]
+                    continue
+                for update in chunk["data"].values():
+                    if update and "answer" in update:
+                        answer = update["answer"]
+        if answer is None:
+            raise GenerationError("answer graph ended without an answer")
+        yield DoneEvent(answer)

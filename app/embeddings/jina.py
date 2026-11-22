@@ -3,11 +3,11 @@ from collections.abc import Callable, Sequence
 
 import httpx
 
+from app.core.http_retry import post_with_retry
 from app.exceptions.exception import EmbeddingDimensionMismatch, EmbeddingError
 
 PASSAGE_TASK = "retrieval.passage"
 QUERY_TASK = "retrieval.query"
-RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
 class JinaEmbedder:
@@ -61,22 +61,13 @@ class JinaEmbedder:
         return vectors
 
     def _post(self, payload: dict) -> dict:
-        for attempt in range(self._max_retries + 1):
-            is_last = attempt == self._max_retries
-            try:
-                response = self._client.post("/embeddings", json=payload)
-            except httpx.TransportError as error:
-                if is_last:
-                    raise EmbeddingError(
-                        f"jina request failed: {type(error).__name__}"
-                    ) from error
-            else:
-                if response.status_code == httpx.codes.OK:
-                    return response.json()
-                retryable = response.status_code in RETRYABLE_STATUSES
-                if is_last or not retryable:
-                    raise EmbeddingError(
-                        f"jina request failed with status {response.status_code}"
-                    )
-            self._sleep(self._backoff_seconds * 2**attempt)
-        raise EmbeddingError("jina request failed")
+        return post_with_retry(
+            self._client,
+            "/embeddings",
+            payload,
+            label="jina",
+            fail=EmbeddingError,
+            max_retries=self._max_retries,
+            backoff_seconds=self._backoff_seconds,
+            sleep=self._sleep,
+        ).json()

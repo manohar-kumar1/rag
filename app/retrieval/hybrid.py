@@ -1,4 +1,5 @@
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import psycopg
@@ -22,12 +23,17 @@ def to_or_query(text: str) -> str:
     return " | ".join(list(terms)[:MAX_QUERY_TERMS])
 
 
+IN_SCOPE = "(cardinality(%(document_ids)s::bigint[]) = 0 or {column} = any(%(document_ids)s))"
+VECTOR_SCOPE = IN_SCOPE.format(column="document_id")
+FTS_SCOPE = IN_SCOPE.format(column="c.document_id")
+
 HYBRID_SEARCH = f"""
 with vector_hits as (
     select id, row_number() over (order by distance, id) as rank
     from (
         select id, embedding operator(extensions.<=>) %(embedding)s::extensions.vector as distance
         from chunks
+        where {VECTOR_SCOPE}
         order by embedding operator(extensions.<=>) %(embedding)s::extensions.vector
         limit %(vector_candidates)s
     ) nearest
@@ -37,7 +43,7 @@ fts_hits as (
     from (
         select c.id, ts_rank_cd(c.fts, q.query) as score
         from chunks c, to_tsquery('{FULL_TEXT_LANGUAGE}', %(fts_query)s) as q(query)
-        where c.fts @@ q.query
+        where c.fts @@ q.query and {FTS_SCOPE}
         order by score desc, c.id
         limit %(fts_candidates)s
     ) matching
@@ -52,7 +58,7 @@ fused as (
     full outer join fts_hits f on f.id = v.id
 )
 select c.id as chunk_id, c.document_id, c.chunk_index, c.content, d.source, d.title,
-       fused.score, fused.vector_rank, fused.fts_rank
+       c.page_start, c.page_end, fused.score, fused.vector_rank, fused.fts_rank
 from fused
 join chunks c on c.id = fused.id
 join documents d on d.id = c.document_id
@@ -79,11 +85,14 @@ class PostgresHybridRetriever:
         self._embedder = embedder
         self._config = config
 
-    def retrieve(self, query: str) -> list[RetrievedChunk]:
+    def retrieve(
+        self, query: str, document_ids: Sequence[int] = ()
+    ) -> list[RetrievedChunk]:
         text = query.strip()
         if not text:
             raise InvalidQuery
         params = {
+            "document_ids": list(document_ids),
             "embedding": to_vector_literal(self._embedder.embed_query(text)),
             "fts_query": to_or_query(text),
             "rrf_k": self._config.rrf_k,
@@ -109,4 +118,5 @@ class PostgresHybridRetriever:
             conn.execute(
                 "select set_config('hnsw.ef_search', %s, true)", (str(ef_search),)
             )
+            conn.execute("select set_config('hnsw.iterative_scan', 'relaxed_order', true)")
             return cursor.execute(HYBRID_SEARCH, params).fetchall()

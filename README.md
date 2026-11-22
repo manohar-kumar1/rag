@@ -121,7 +121,7 @@ Changing the embedding model or dimension means re-embedding every document.
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SECRET_KEY` | Server-side Supabase key. Never expose it to a browser |
 | `STORAGE_BUCKET` | Name of the private bucket for original files |
-| `STORAGE_TIMEOUT_SECONDS` | Storage request timeout |
+| `STORAGE_TIMEOUT_SECONDS` | Storage request timeout. Size it so `MAX_UPLOAD_BYTES` can be sent at your slowest upload speed |
 
 ### Worker and API
 
@@ -176,6 +176,8 @@ Changing the embedding model or dimension means re-embedding every document.
 | `RERANK_MODEL` | Jina reranker model. Required when reranking is on |
 | `RERANK_CANDIDATES` | Chunks retrieved for the reranker to score |
 | `RERANK_TOP_N` | Chunks kept after reranking |
+| `RERANK_MAX_RETRIES` | Retries when the reranker answers 429 or a server error. A rate-limited query waits for them, then keeps the retrieval order |
+| `RERANK_RETRY_BACKOFF_SECONDS` | First wait between rerank retries; it doubles each time |
 | `CONTEXTUAL_CHUNKING_ENABLED` | Write a short context note for every chunk at ingestion |
 | `CONTEXTUAL_MODEL` | Google model that writes the notes. Required when contextual chunking is on |
 | `ANSWER_CACHE_ENABLED` | Serve exact repeats of a question from the cache |

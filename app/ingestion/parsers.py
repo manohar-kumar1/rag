@@ -8,6 +8,7 @@ from docx.text.paragraph import Paragraph
 from pypdf import PdfReader
 
 from app.exceptions.exception import FileTooLarge, ParseError, UnsupportedFileType
+from app.ingestion.chunking import PAGE_BREAK
 from app.ingestion.detect import FileType
 
 
@@ -39,7 +40,7 @@ class PdfParser:
             pages = [page.extract_text() or "" for page in reader.pages]
         except Exception as error:
             raise ParseError("PDF could not be read") from error
-        return "\n\n".join(page for page in pages if page.strip())
+        return f"\n\n{PAGE_BREAK}".join(pages)
 
 
 class DocxParser:

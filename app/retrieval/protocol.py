@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -14,7 +15,11 @@ class RetrievedChunk:
     vector_rank: int | None
     fts_rank: int | None
     rerank_score: float | None = None
+    page_start: int | None = None
+    page_end: int | None = None
 
 
 class Retriever(Protocol):
-    def retrieve(self, query: str) -> list[RetrievedChunk]: ...
+    def retrieve(
+        self, query: str, document_ids: Sequence[int] = ()
+    ) -> list[RetrievedChunk]: ...

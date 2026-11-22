@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -10,6 +10,7 @@ from app.retrieval.protocol import RetrievedChunk
 MAX_QUESTION_CHARS = 2000
 MAX_TURN_CHARS = 8000
 MAX_HISTORY_TURNS = 20
+MAX_SCOPED_DOCUMENTS = 50
 
 
 class TurnIn(BaseModel):
@@ -26,6 +27,12 @@ class QueryIn(BaseModel):
         "and `history` must be empty.",
     )
 
+    document_ids: list[Annotated[int, Field(ge=1)]] = Field(
+        default_factory=list,
+        max_length=MAX_SCOPED_DOCUMENTS,
+        description="Answer only from these documents. Empty means every document.",
+    )
+
     @model_validator(mode="after")
     def history_or_thread(self) -> "QueryIn":
         if self.thread_id is not None and self.history:
@@ -37,6 +44,7 @@ class QueryIn(BaseModel):
             text=self.question,
             history=tuple(Turn(turn.role, turn.content) for turn in self.history),
             thread_id=None if self.thread_id is None else str(self.thread_id),
+            document_ids=tuple(self.document_ids),
         )
 
 
@@ -47,6 +55,8 @@ class SourceOut(BaseModel):
     source: str
     title: str | None
     chunk_index: int
+    page_start: int | None
+    page_end: int | None
     text: str
 
     @classmethod
@@ -58,6 +68,8 @@ class SourceOut(BaseModel):
             source=chunk.source,
             title=chunk.title,
             chunk_index=chunk.chunk_index,
+            page_start=chunk.page_start,
+            page_end=chunk.page_end,
             text=chunk.content,
         )
 
@@ -104,3 +116,8 @@ class SourcesOut(BaseModel):
 
 class TokenOut(BaseModel):
     text: str
+
+
+class ProgressOut(BaseModel):
+    step: str
+    status: Literal["running", "done"]

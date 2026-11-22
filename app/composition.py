@@ -109,7 +109,12 @@ def build_retriever(
         ),
     )
     if settings.rerank_enabled:
-        reranker = JinaReranker(create_jina_client(settings), settings.rerank_model)
+        reranker = JinaReranker(
+            create_jina_client(settings),
+            settings.rerank_model,
+            settings.rerank_max_retries,
+            settings.rerank_retry_backoff_seconds,
+        )
         retriever = RerankingRetriever(retriever, reranker, settings.rerank_top_n)
     return TracedRetriever(retriever) if tracing.enabled else retriever
 

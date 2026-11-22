@@ -39,8 +39,8 @@ UPDATE_EXTERNAL = (
 LOCK_DOCUMENT = "select content_hash from documents where id = %s for update"
 DELETE_CHUNKS = "delete from chunks where document_id = %s"
 INSERT_CHUNK = (
-    "insert into chunks (document_id, chunk_index, content, context, embedding) "
-    "values (%s, %s, %s, %s, %s::extensions.vector)"
+    "insert into chunks (document_id, chunk_index, content, context, page_start, page_end, "
+    "embedding) values (%s, %s, %s, %s, %s, %s, %s::extensions.vector)"
 )
 
 
@@ -48,6 +48,8 @@ INSERT_CHUNK = (
 class ChunkText:
     content: str
     context: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
 
     @property
     def embedding_text(self) -> str:
@@ -130,7 +132,15 @@ def insert_chunks(
     vectors: Sequence[Sequence[float]],
 ) -> None:
     rows = [
-        (document_id, index, chunk.content, chunk.context, to_vector_literal(vector))
+        (
+            document_id,
+            index,
+            chunk.content,
+            chunk.context,
+            chunk.page_start,
+            chunk.page_end,
+            to_vector_literal(vector),
+        )
         for index, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True))
     ]
     with conn.cursor() as cursor:

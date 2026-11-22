@@ -78,7 +78,7 @@ class CachingAnswerer:
 
     async def _entry(self, question: Question) -> CacheEntry:
         version = await asyncio.to_thread(self._corpus.current)
-        return CacheEntry(question.scope, question_key(question.text), version)
+        return CacheEntry(question.cache_scope, question_key(question.text), version)
 
     async def _lookup(self, entry: CacheEntry) -> Answer | None:
         try:

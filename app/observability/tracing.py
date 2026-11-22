@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import aclosing, contextmanager
 
 import langsmith
@@ -85,8 +85,10 @@ class TracedRetriever:
         process_inputs=retrieval_inputs,
         process_outputs=retrieval_outputs,
     )
-    def retrieve(self, query: str) -> list[RetrievedChunk]:
-        return self._inner.retrieve(query)
+    def retrieve(
+        self, query: str, document_ids: Sequence[int] = ()
+    ) -> list[RetrievedChunk]:
+        return self._inner.retrieve(query, document_ids)
 
 
 class TracedAnswerer:

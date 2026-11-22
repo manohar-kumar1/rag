@@ -70,7 +70,9 @@ class FastPathAnswerer:
         return await final_answer(self.stream(question))
 
     async def stream(self, question: Question) -> AsyncIterator[StreamEvent]:
-        sources = await asyncio.to_thread(self._retriever.retrieve, question.text)
+        sources = await asyncio.to_thread(
+            self._retriever.retrieve, question.text, question.document_ids
+        )
         yield SourcesEvent(sources)
         async with aclosing(answer_events(self._generator, question.text, sources)) as events:
             async for event in events:
