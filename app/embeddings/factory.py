@@ -1,5 +1,4 @@
 import httpx
-from sentence_transformers import SentenceTransformer
 
 from app.core.config import Settings
 from app.embeddings.jina import JinaEmbedder
@@ -10,6 +9,9 @@ DIMENSION_PROBE_TEXT = "dimension check"
 
 
 def create_local_embedder(settings: Settings) -> Embedder:
+    # Imported here: the optional local-embeddings extra pulls in PyTorch, which deploys skip.
+    from sentence_transformers import SentenceTransformer
+
     return SentenceTransformerEmbedder(
         SentenceTransformer(settings.embedding_model),
         settings.embedding_dimension,
