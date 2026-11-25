@@ -1,6 +1,6 @@
 from app.conversations.store import PostgresConversationStore
 from app.core.config import get_settings
-from app.db.connection import create_pool
+from app.db.pool import create_pool
 
 
 def main() -> int:

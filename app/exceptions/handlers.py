@@ -9,7 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import Scope
 
 from app.core.request_id import REQUEST_ID_HEADER, request_id_of
-from app.exceptions.exception import AppError
+from app.exceptions.errors import AppError
 
 logger = logging.getLogger(__name__)
 

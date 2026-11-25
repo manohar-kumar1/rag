@@ -3,7 +3,7 @@ from collections.abc import Sequence
 
 from app.composition import build_container
 from app.core.config import get_settings
-from app.exceptions.exception import AppError
+from app.exceptions.errors import AppError
 from app.exceptions.handlers import report_cli_error
 
 PREVIEW_CHARACTERS = 110

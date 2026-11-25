@@ -18,6 +18,10 @@ class DocumentRecord:
     processing_started_at: datetime | None
     processed_at: datetime | None
     processing_stage: str | None
+    doc_type: str | None = None
+    department: str | None = None
+    product: str | None = None
+    version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -29,3 +33,4 @@ class NewUpload:
     content_type: str
     size_bytes: int
     storage_key: str
+    doc_type: str | None = None

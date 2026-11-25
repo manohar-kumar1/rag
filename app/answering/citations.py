@@ -1,7 +1,7 @@
 import re
 from dataclasses import dataclass
 
-from app.answering.prompts import NO_ANSWER
+from app.prompts import NO_ANSWER
 from app.retrieval.protocol import RetrievedChunk
 
 MARKER_GROUP = re.compile(r"\[(\d{1,4}(?:\s*,\s*\d{1,4})*)\]")

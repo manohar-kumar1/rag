@@ -13,13 +13,13 @@ from langchain_core.callbacks import get_usage_metadata_callback
 
 from app.composition import build_container
 from app.core.config import Settings, get_settings
-from app.db.connection import create_pool
-from app.db.scratch import scratch_schema
+from app.db.pool import create_pool
+from app.db.scratch_schema import copy_table, scratch_schema
+from app.evaluation.answer_scoring import answer_cases, case_row, summarize
 from app.evaluation.dataset import load_cases
-from app.evaluation.scoring import answer_cases, case_row, summarize
-from app.exceptions.exception import AppError
+from app.exceptions.errors import AppError
 from app.exceptions.handlers import report_cli_error
-from app.ingestion.upload import EXTENSION_TYPES
+from app.ingestion.upload_service import EXTENSION_TYPES
 from app.llm.factory import create_judge_model
 from app.observability.tracing import flush
 
@@ -51,9 +51,7 @@ def run_metadata(settings: Settings, dataset: Path, files: list[Path]) -> dict:
         "dataset": {"file": dataset.name, "sha256": digest(dataset)},
         "corpus": {p.name: digest(p) for p in files},
         "models": {
-            "primary": settings.google_model,
-            "fallback": settings.anthropic_model if settings.anthropic_fallback_enabled else None,
-            "decision": settings.google_decision_model,
+            "primary": settings.anthropic_model,
             "judge": settings.eval_judge_model,
             "embedding": settings.embedding_model,
         },
@@ -64,8 +62,11 @@ def run_metadata(settings: Settings, dataset: Path, files: list[Path]) -> dict:
             "vector_candidates": settings.retrieval_vector_candidates,
             "fts_candidates": settings.retrieval_fts_candidates,
             "top_k": settings.retrieval_top_k,
-            "chunk_size": settings.chunk_size,
-            "chunk_overlap": settings.chunk_overlap,
+            "chunk_min_tokens": settings.chunk_min_tokens,
+            "chunk_max_tokens": settings.chunk_max_tokens,
+            "chunk_overlap_tokens": settings.chunk_overlap_tokens,
+            "parent_max_tokens": settings.parent_max_tokens,
+            "pdf_parser": settings.pdf_parser,
         },
         "features": {
             "rerank": settings.rerank_model if settings.rerank_enabled else None,
@@ -107,12 +108,13 @@ def evaluate_corpus(
     report = {"run": run_metadata(settings, dataset, files)}
     judge_model = None
     if not skip_judge:
-        from app.evaluation.judge import check_judge
+        from app.evaluation.ragas_judge import check_judge
 
         judge_model = create_judge_model(settings)
         check_judge(judge_model)
     started = time.perf_counter()
     with scratch_schema(settings, SCHEMA_PREFIX) as schema:
+        copy_table(settings, schema, "parse_cache")
         pool = create_pool(settings, search_path=schema)
         container = build_container(settings, pool)
         pool.open(wait=True, timeout=settings.db_pool_timeout_seconds)
@@ -128,7 +130,7 @@ def evaluate_corpus(
             report["answering_usage"] = answering_usage.usage_metadata
             usage = {}
             if judge_model is not None:
-                from app.evaluation.judge import judge
+                from app.evaluation.ragas_judge import judge
 
                 usage = judge(
                     results, judge_model, container.embedder, settings.eval_max_workers

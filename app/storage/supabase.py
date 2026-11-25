@@ -2,7 +2,7 @@ from urllib.parse import quote
 
 import httpx
 
-from app.exceptions.exception import StorageError, StoredFileMissing
+from app.exceptions.errors import StorageError, StoredFileMissing
 
 
 class SupabaseFileStore:

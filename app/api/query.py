@@ -14,10 +14,10 @@ from app.answering.protocol import (
     TokenEvent,
 )
 from app.api.dependencies import get_answerer
-from app.api.errors import error_responses
-from app.exceptions.exception import AppError
+from app.api.error_responses import error_responses
+from app.exceptions.errors import AppError
 from app.exceptions.handlers import app_error_body, unexpected_error_body
-from app.models.query import ProgressOut, QueryIn, QueryOut, SourcesOut, TokenOut
+from app.schemas.query import ProgressOut, QueryIn, QueryOut, SourcesOut, TokenOut
 
 router = APIRouter(prefix="/query", tags=["query"])
 

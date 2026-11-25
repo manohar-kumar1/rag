@@ -2,29 +2,15 @@ import logging
 from collections.abc import Sequence
 from typing import Protocol
 
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 
 from app.answering.generator import message_text
+from app.prompts import CONTEXT_PROMPT
 
 logger = logging.getLogger(__name__)
 
 MAX_DOCUMENT_CHARS = 30000
 
-CONTEXT_PROMPT = ChatPromptTemplate.from_messages(
-    [
-        (
-            "human",
-            (
-                "<document>\n{document}\n</document>\n\n"
-                "Here is a chunk from that document:\n<chunk>\n{chunk}\n</chunk>\n\n"
-                "Write one or two sentences that situate this chunk within the document, "
-                "naming the document's subject and the section the chunk belongs to, to "
-                "improve search retrieval of the chunk. Reply with those sentences only."
-            ),
-        )
-    ]
-)
 
 
 class Contextualizer(Protocol):

@@ -5,20 +5,20 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.limits import UploadSizeLimitMiddleware
+from app.api.health import router as system_router
 from app.api.openapi import document_problem_media_type
 from app.api.routes import v1_router
-from app.api.system import router as system_router
+from app.api.upload_limit import UploadSizeLimitMiddleware
 from app.composition import Container, build_container
 from app.core.config import Settings
 from app.core.request_id import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.exceptions.handlers import register_exception_handlers
-from app.ingestion.upload import EXTENSION_TYPES
+from app.ingestion.upload_service import EXTENSION_TYPES
 from app.observability.tracing import flush
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_METHODS = ["GET", "POST", "DELETE"]
+ALLOWED_METHODS = ["GET", "POST", "PATCH", "DELETE"]
 EXPOSED_HEADERS = ["Location", "Retry-After", "Idempotent-Replayed", REQUEST_ID_HEADER]
 
 

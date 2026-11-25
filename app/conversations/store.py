@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 
 from app.answering.protocol import Turn
-from app.db.source import ConnectionSource
+from app.db.connection_source import ConnectionSource
 
 RECENT_TURNS = (
     "select role, content from ("

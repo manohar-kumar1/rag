@@ -7,8 +7,10 @@ from typing import Protocol
 import httpx
 
 from app.core.http_retry import post_with_retry
-from app.exceptions.exception import RerankError
+from app.exceptions.errors import RerankError
+from app.retrieval.filters import EMPTY_FILTER, RetrievalFilter
 from app.retrieval.protocol import RetrievedChunk, Retriever
+from app.retrieval.stage_log import log_stage
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +68,9 @@ class RerankingRetriever:
         self._top_n = top_n
 
     def retrieve(
-        self, query: str, document_ids: Sequence[int] = ()
+        self, query: str, filters: RetrievalFilter = EMPTY_FILTER
     ) -> list[RetrievedChunk]:
-        candidates = self._inner.retrieve(query, document_ids)
+        candidates = self._inner.retrieve(query, filters)
         if len(candidates) <= 1:
             return candidates[: self._top_n]
         try:
@@ -78,6 +80,10 @@ class RerankingRetriever:
         except Exception as error:  # noqa: BLE001
             logger.warning("rerank failed, keeping retrieval order: %s", error)
             return candidates[: self._top_n]
-        return [replace(candidates[index], rerank_score=score) for index, score in ranked][
-            : self._top_n
-        ]
+        reranked = [replace(candidates[index], rerank_score=score) for index, score in ranked]
+        log_stage(
+            "rerank",
+            candidates=[chunk.chunk_id for chunk in candidates],
+            kept=[[chunk.chunk_id, round(chunk.rerank_score or 0, 4)] for chunk in reranked],
+        )
+        return reranked[: self._top_n]

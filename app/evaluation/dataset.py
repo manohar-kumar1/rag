@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.answering.protocol import Question, Turn
-from app.routing.protocol import Route
+from app.query.protocol import Route
 
 
 class EvalTurn(BaseModel):

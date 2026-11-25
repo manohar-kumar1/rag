@@ -1,6 +1,7 @@
-from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
+
+from app.retrieval.filters import EMPTY_FILTER, RetrievalFilter
 
 
 @dataclass(frozen=True)
@@ -17,9 +18,16 @@ class RetrievedChunk:
     rerank_score: float | None = None
     page_start: int | None = None
     page_end: int | None = None
+    heading_path: str = ""
+    section_id: int | None = None
+    passage: str | None = None
+
+    @property
+    def prompt_text(self) -> str:
+        return self.passage or self.content
 
 
 class Retriever(Protocol):
     def retrieve(
-        self, query: str, document_ids: Sequence[int] = ()
+        self, query: str, filters: RetrievalFilter = EMPTY_FILTER
     ) -> list[RetrievedChunk]: ...

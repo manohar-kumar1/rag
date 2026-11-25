@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterator
 from contextlib import aclosing, contextmanager
 
 import langsmith
@@ -7,6 +7,7 @@ from langsmith import Client, traceable
 from app.answering.protocol import Answer, Answerer, Question, StreamEvent
 from app.core.config import Settings
 from app.observability.redaction import Redactor
+from app.retrieval.filters import EMPTY_FILTER, RetrievalFilter
 from app.retrieval.protocol import RetrievedChunk, Retriever
 
 TRACE_FLUSH_TIMEOUT_SECONDS = 10.0
@@ -28,7 +29,6 @@ class Tracing:
 
 def settings_secrets(settings: Settings) -> list[str | None]:
     return [
-        settings.google_api_key,
         settings.anthropic_api_key,
         settings.jina_api_key,
         settings.supabase_secret_key,
@@ -86,9 +86,9 @@ class TracedRetriever:
         process_outputs=retrieval_outputs,
     )
     def retrieve(
-        self, query: str, document_ids: Sequence[int] = ()
+        self, query: str, filters: RetrievalFilter = EMPTY_FILTER
     ) -> list[RetrievedChunk]:
-        return self._inner.retrieve(query, document_ids)
+        return self._inner.retrieve(query, filters)
 
 
 class TracedAnswerer:

@@ -4,11 +4,11 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 
 from app.api.dependencies import get_job_retry_after, get_job_service
-from app.api.errors import error_responses
-from app.ingestion.jobs import JobService
+from app.api.error_responses import error_responses
+from app.ingestion.job_service import JobService
 from app.ingestion.records import DocumentRecord
 from app.ingestion.status import JobStatus, job_status
-from app.models.jobs import JobOut
+from app.schemas.jobs import JobOut
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 

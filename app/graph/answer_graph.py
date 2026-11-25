@@ -10,6 +10,7 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from app.answering.fast_path import answer_events, final_answer
 from app.answering.generator import AnswerGenerator
 from app.answering.protocol import (
     UNVERIFIED_MESSAGE,
@@ -21,12 +22,12 @@ from app.answering.protocol import (
     StreamEvent,
     TokenEvent,
 )
-from app.answering.service import answer_events, final_answer
-from app.exceptions.exception import GenerationError
+from app.exceptions.errors import GenerationError
+from app.query.planning import LlmPlanner
+from app.query.protocol import Grader, Route, RouteDecider
+from app.query.rewrite import LlmQueryRewriter
 from app.retrieval.protocol import RetrievedChunk, Retriever
-from app.routing.planning import LlmPlanner
-from app.routing.protocol import Grader, Route, RouteDecider
-from app.routing.rewrite import LlmQueryRewriter
+from app.retrieval.stage_log import log_stage
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ def build_answer_graph(
         try:
             route = await asyncio.to_thread(decider.decide, state["question"])
         except Exception as error:  # noqa: BLE001
-            logger.warning("route decision failed, using complex path: %s", type(error).__name__)
+            logger.warning("routing failed, using complex path: %s", type(error).__name__)
             route = Route.COMPLEX
         return {"route": route}
 
@@ -129,6 +130,7 @@ def build_answer_graph(
         except Exception as error:  # noqa: BLE001
             logger.warning("query rewrite failed, using the question: %s", type(error).__name__)
             query = question.text
+        log_stage("rewrite", original=question.text, rewritten=query)
         return {"search_query": query}
 
     def dispatch(state: AnswerState) -> AnswerState:
@@ -136,7 +138,7 @@ def build_answer_graph(
 
     async def retrieve(state: AnswerState) -> AnswerState:
         sources = await asyncio.to_thread(
-            retriever.retrieve, state["search_query"], state["question"].document_ids
+            retriever.retrieve, state["search_query"], state["question"].filters
         )
         get_stream_writer()(SourcesEvent(sources))
         return {"sources": sources}
@@ -160,7 +162,7 @@ def build_answer_graph(
 
     async def research(state: AnswerState) -> AnswerState:
         found = await asyncio.to_thread(
-            retriever.retrieve, state["query"], state["question"].document_ids
+            retriever.retrieve, state["query"], state["question"].filters
         )
         sub_question = state["sub_questions"][state["current"]]
         sufficient = await is_sufficient(sub_question, found)
@@ -174,7 +176,7 @@ def build_answer_graph(
             return False
         try:
             probability = await asyncio.to_thread(
-                grader.sufficiency, sub_question, [chunk.content for chunk in found]
+                grader.sufficiency, sub_question, [chunk.prompt_text for chunk in found]
             )
         except Exception as error:  # noqa: BLE001
             logger.warning("grading failed, accepting the passages: %s", type(error).__name__)
@@ -242,8 +244,8 @@ def build_answer_graph(
     async def verified(answer: Answer) -> Answer:
         if not answer.answered:
             return answer
-        cited = [citation.chunk.content for citation in answer.citations]
-        passages = cited or [chunk.content for chunk in answer.sources]
+        cited = [citation.chunk.prompt_text for citation in answer.citations]
+        passages = cited or [chunk.prompt_text for chunk in answer.sources]
         try:
             score = await asyncio.to_thread(grader.groundedness, answer.text, passages)
         except Exception as error:  # noqa: BLE001

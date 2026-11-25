@@ -1,18 +1,13 @@
-from langchain.agents.middleware import (
-    AgentMiddleware,
-    ModelFallbackMiddleware,
-    ModelRetryMiddleware,
-)
+from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware
 from langchain_anthropic import ChatAnthropic
+from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import Runnable
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenAIClassifier
 
 from app.core.config import Settings
 from app.llm.resilience import RetryPolicy, is_retryable, with_retries
 
-GOOGLE_SDK_RETRIES_OFF = 1
-ANTHROPIC_SDK_RETRIES_OFF = 0
+SDK_RETRIES_OFF = 0
 
 
 def retry_policy(settings: Settings) -> RetryPolicy:
@@ -23,85 +18,40 @@ def retry_policy(settings: Settings) -> RetryPolicy:
     )
 
 
-def create_primary_model(settings: Settings) -> BaseChatModel:
-    return ChatGoogleGenerativeAI(
-        model=settings.google_model,
-        google_api_key=settings.google_api_key,
-        max_retries=GOOGLE_SDK_RETRIES_OFF,
-        timeout=settings.llm_timeout_seconds,
-        max_output_tokens=settings.llm_max_output_tokens,
-    )
-
-
-def create_fallback_model(settings: Settings) -> BaseChatModel | None:
-    if not settings.anthropic_fallback_enabled:
-        return None
+def create_claude(settings: Settings, model: str) -> BaseChatModel:
     return ChatAnthropic(
-        model=settings.anthropic_model,
+        model=model,
         api_key=settings.anthropic_api_key,
-        max_retries=ANTHROPIC_SDK_RETRIES_OFF,
+        max_retries=SDK_RETRIES_OFF,
         timeout=settings.llm_timeout_seconds,
         max_tokens=settings.llm_max_output_tokens,
     )
 
 
-def resilient_chain(
-    primary: BaseChatModel, fallback: BaseChatModel | None, policy: RetryPolicy
-) -> Runnable:
-    retried = with_retries(primary, policy)
-    if fallback is None:
-        return retried
-    return retried.with_fallbacks([with_retries(fallback, policy)])
+def agent_middleware(policy: RetryPolicy) -> list[AgentMiddleware]:
+    return [
+        AnthropicPromptCachingMiddleware(unsupported_model_behavior="raise"),
+        ModelRetryMiddleware(
+            max_retries=policy.max_retries,
+            retry_on=is_retryable,
+            on_failure="error",
+            initial_delay=policy.initial_delay_seconds,
+            max_delay=policy.max_delay_seconds,
+        )
+    ]
 
 
-def agent_middleware(
-    fallback: BaseChatModel | None, policy: RetryPolicy
-) -> list[AgentMiddleware]:
-    retry = ModelRetryMiddleware(
-        max_retries=policy.max_retries,
-        retry_on=is_retryable,
-        on_failure="error",
-        initial_delay=policy.initial_delay_seconds,
-        max_delay=policy.max_delay_seconds,
-    )
-    if fallback is None:
-        return [retry]
-    return [ModelFallbackMiddleware(fallback), retry]
-
-
-def create_judge_model(settings: Settings) -> BaseChatModel:
-    return ChatGoogleGenerativeAI(
-        model=settings.eval_judge_model,
-        google_api_key=settings.google_api_key,
-        max_retries=GOOGLE_SDK_RETRIES_OFF,
-        timeout=settings.llm_timeout_seconds,
-        max_output_tokens=settings.llm_max_output_tokens,
-    )
-
-
-def create_contextual_model(settings: Settings) -> Runnable:
-    model = ChatGoogleGenerativeAI(
-        model=settings.contextual_model,
-        google_api_key=settings.google_api_key,
-        max_retries=GOOGLE_SDK_RETRIES_OFF,
-        timeout=settings.llm_timeout_seconds,
-        max_output_tokens=settings.llm_max_output_tokens,
-    )
-    return with_retries(model, retry_policy(settings))
-
-
-def create_decision_model(settings: Settings) -> Runnable:
-    return GoogleGenAIClassifier(
-        model=settings.google_decision_model,
-        google_api_key=settings.google_api_key,
-        timeout=settings.decision_timeout_seconds,
-        max_retries=GOOGLE_SDK_RETRIES_OFF,
-    )
+def create_base_model(settings: Settings) -> BaseChatModel:
+    return create_claude(settings, settings.anthropic_model)
 
 
 def create_chat_model(settings: Settings) -> Runnable:
-    return resilient_chain(
-        create_primary_model(settings),
-        create_fallback_model(settings),
-        retry_policy(settings),
-    )
+    return with_retries(create_base_model(settings), retry_policy(settings))
+
+
+def create_judge_model(settings: Settings) -> BaseChatModel:
+    return create_claude(settings, settings.eval_judge_model)
+
+
+def create_contextual_model(settings: Settings) -> Runnable:
+    return with_retries(create_claude(settings, settings.contextual_model), retry_policy(settings))

@@ -3,11 +3,11 @@ from collections.abc import Callable, Iterator, Sequence
 
 from app.composition import build_container
 from app.core.config import get_settings
-from app.exceptions.exception import AppError
+from app.exceptions.errors import AppError
 from app.exceptions.handlers import report_cli_error
+from app.ingestion.document_repository import DocumentRepository
 from app.ingestion.pipeline import IngestionResult
 from app.ingestion.records import DocumentRecord
-from app.ingestion.repository import DocumentRepository
 from app.storage.protocol import FileStore
 
 PAGE_SIZE = 100
@@ -27,7 +27,7 @@ def stored_documents(repository: DocumentRepository) -> Iterator[DocumentRecord]
 def reindex(
     repository: DocumentRepository,
     files: FileStore,
-    reingest: Callable[[int, bytes], IngestionResult],
+    reingest: Callable[[int, bytes, str | None], IngestionResult],
     report: Callable[[str], None],
 ) -> int:
     failures = 0
@@ -36,7 +36,7 @@ def reindex(
             report(f"skipped {record.id} {record.source} ({record.status})")
             continue
         try:
-            result = reingest(record.id, files.get(record.storage_key))
+            result = reingest(record.id, files.get(record.storage_key), record.title)
         except AppError as error:
             failures += 1
             report(f"failed {record.id} {record.source}: {error.client_message}")
@@ -53,7 +53,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         failures = reindex(
             container.documents,
             container.files,
-            lambda document_id, data: container.ingestion.reingest(document_id, data),
+            lambda document_id, data, title: container.ingestion.reingest(
+                document_id, data, title=title
+            ),
             print,
         )
     except AppError as error:

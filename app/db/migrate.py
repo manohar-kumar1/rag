@@ -5,9 +5,9 @@ from collections.abc import Sequence
 import psycopg
 
 from app.core.config import get_settings
-from app.db.connection import to_psycopg_dsn
 from app.db.migrator import Migrator, load_migrations
-from app.exceptions.exception import AppError
+from app.db.pool import to_psycopg_dsn
+from app.exceptions.errors import AppError
 from app.exceptions.handlers import report_cli_error
 
 

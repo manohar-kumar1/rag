@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Callable, Mapping
 
-from app.exceptions.exception import NotReady
+from app.exceptions.errors import NotReady
 
 logger = logging.getLogger(__name__)
 

@@ -4,13 +4,13 @@ from fastapi import APIRouter, Depends, Header, Query, Request, Response, Upload
 from fastapi.concurrency import run_in_threadpool
 
 from app.api.dependencies import get_document_service, get_job_retry_after, get_uploads
-from app.api.errors import error_responses
+from app.api.error_responses import error_responses
 from app.api.jobs import job_headers
 from app.api.pagination import MAX_CURSOR_LENGTH, decode_cursor, encode_cursor
-from app.ingestion.documents import DocumentService
+from app.ingestion.document_service import DocumentService
 from app.ingestion.idempotency import IdempotentUploads
-from app.models.documents import DocumentOut, DocumentPageOut
-from app.models.jobs import JobOut, UploadOut
+from app.schemas.documents import DocumentMetadataIn, DocumentOut, DocumentPageOut
+from app.schemas.jobs import JobOut, UploadOut
 
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
@@ -126,3 +126,22 @@ def delete_document(
 ) -> Response:
     service.delete(document_id)
     return Response(status_code=204)
+
+
+@router.patch(
+    "/{document_id}",
+    response_model=DocumentOut,
+    summary="Update a document's metadata",
+    description=(
+        "Sets doc_type, department, product or version. Only the fields in the body change; "
+        "send null to clear one. These fields can be used as query filters."
+    ),
+    responses=error_responses(404, 422),
+)
+def update_document(
+    document_id: int,
+    body: DocumentMetadataIn,
+    service: Annotated[DocumentService, Depends(get_document_service)],
+) -> DocumentOut:
+    changes = {name: getattr(body, name) for name in body.model_fields_set}
+    return DocumentOut.model_validate(service.update_metadata(document_id, changes))

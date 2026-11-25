@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 import httpx
 
 from app.core.http_retry import post_with_retry
-from app.exceptions.exception import EmbeddingDimensionMismatch, EmbeddingError
+from app.exceptions.errors import EmbeddingDimensionMismatch, EmbeddingError
 
 PASSAGE_TASK = "retrieval.passage"
 QUERY_TASK = "retrieval.query"

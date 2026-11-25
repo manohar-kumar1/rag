@@ -25,8 +25,13 @@ class Settings(BaseSettings):
     jina_max_retries: int
     jina_retry_backoff_seconds: float
     jina_timeout_seconds: float
-    chunk_size: int
-    chunk_overlap: int
+    chunk_min_tokens: int
+    chunk_max_tokens: int
+    chunk_overlap_tokens: int
+    parent_max_tokens: int
+    hyde_enabled: bool
+    filter_extraction_enabled: bool
+    pdf_parser: Literal["llamaparse", "pypdf"]
     docx_max_uncompressed_bytes: int
     max_upload_bytes: int
     max_pdf_pages: int
@@ -55,7 +60,6 @@ class Settings(BaseSettings):
     llm_max_retries: int
     llm_retry_initial_seconds: float
     llm_retry_max_seconds: float
-    decision_timeout_seconds: float
     agent_max_subquestions: int
     agent_max_iterations: int
     agent_max_rewrites: int
@@ -76,11 +80,13 @@ class Settings(BaseSettings):
     answer_cache_ttl_seconds: float
     answer_cache_semantic_threshold: float
     langsmith_tracing: bool
-    google_api_key: str
-    google_model: str
-    google_decision_model: str
-    anthropic_api_key: str | None = None
-    anthropic_model: str | None = None
+    anthropic_api_key: str
+    anthropic_model: str
+    llamaparse_api_key: str | None = None
+    llamaparse_tier: str | None = None
+    llamaparse_version: str | None = None
+    llamaparse_timeout_seconds: float | None = None
+    llamaparse_max_retries: int | None = None
     langsmith_api_key: str | None = None
     langsmith_project: str | None = None
     langsmith_endpoint: str | None = None
@@ -135,8 +141,24 @@ class Settings(BaseSettings):
             raise ValueError(
                 "jina backoff must not be negative and timeout must be positive"
             )
-        if not 0 <= self.chunk_overlap < self.chunk_size:
-            raise ValueError("chunk sizes must satisfy 0 <= overlap < size")
+        if not 0 < self.chunk_min_tokens <= self.chunk_max_tokens:
+            raise ValueError("chunk tokens must satisfy 0 < min <= max")
+        if not 0 <= self.chunk_overlap_tokens < self.chunk_max_tokens:
+            raise ValueError("chunk overlap must satisfy 0 <= overlap < max tokens")
+        if self.parent_max_tokens < 0:
+            raise ValueError("parent max tokens must not be negative")
+        layout_settings = (
+            self.llamaparse_api_key,
+            self.llamaparse_tier,
+            self.llamaparse_version,
+            self.llamaparse_timeout_seconds,
+            self.llamaparse_max_retries,
+        )
+        if self.pdf_parser == "llamaparse" and any(value is None for value in layout_settings):
+            raise ValueError(
+                "LLAMAPARSE_API_KEY, _TIER, _VERSION, _TIMEOUT_SECONDS and _MAX_RETRIES are "
+                "required when PDF_PARSER is llamaparse"
+            )
         limits = (
             self.docx_max_uncompressed_bytes,
             self.max_upload_bytes,
@@ -179,8 +201,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "tracing needs LANGSMITH_API_KEY, LANGSMITH_PROJECT and LANGSMITH_ENDPOINT"
             )
-        if self.decision_timeout_seconds <= 0:
-            raise ValueError("decision timeout must be positive")
         if self.llm_timeout_seconds <= 0 or self.llm_max_output_tokens < 1:
             raise ValueError("llm timeout must be positive and max output tokens at least 1")
         if self.llm_max_retries < 0 or not (
@@ -206,10 +226,6 @@ class Settings(BaseSettings):
     @property
     def evaluation_configured(self) -> bool:
         return bool(self.eval_judge_model and self.eval_max_workers)
-
-    @property
-    def anthropic_fallback_enabled(self) -> bool:
-        return bool(self.anthropic_api_key and self.anthropic_model)
 
 
 @lru_cache

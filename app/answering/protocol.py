@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from app.answering.citations import Citation
+from app.retrieval.filters import EMPTY_FILTER, RetrievalFilter
 from app.retrieval.protocol import RetrievedChunk
 
 DEFAULT_SCOPE = "default"
@@ -63,13 +64,13 @@ class Question:
     history: Sequence[Turn] = field(default_factory=tuple)
     thread_id: str | None = None
     scope: str = DEFAULT_SCOPE
-    document_ids: tuple[int, ...] = ()
+    filters: RetrievalFilter = EMPTY_FILTER
 
     @property
     def cache_scope(self) -> str:
-        if not self.document_ids:
+        if self.filters.is_empty:
             return self.scope
-        return f"{self.scope}|documents:" + ",".join(str(i) for i in sorted(set(self.document_ids)))
+        return f"{self.scope}|{self.filters.key}"
 
 
 class Answerer(Protocol):

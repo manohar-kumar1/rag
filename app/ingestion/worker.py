@@ -2,10 +2,10 @@ import logging
 import threading
 from typing import Protocol
 
-from app.exceptions.exception import AppError
+from app.exceptions.errors import AppError
+from app.ingestion.document_repository import WorkQueue
 from app.ingestion.pipeline import StageListener
 from app.ingestion.records import DocumentRecord
-from app.ingestion.repository import WorkQueue
 from app.storage.protocol import FileStore
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,9 @@ MISSING_FILE_KEY = "stored file reference is missing"
 
 
 class Reingester(Protocol):
-    def reingest(self, document_id: int, data: bytes, on_stage: StageListener): ...
+    def reingest(
+        self, document_id: int, data: bytes, on_stage: StageListener, title: str | None
+    ): ...
 
 
 class IngestionWorker:
@@ -85,6 +87,7 @@ class IngestionWorker:
                 record.id,
                 self._files.get(record.storage_key),
                 lambda stage: self._queue.set_stage(record.id, stage),
+                record.title,
             )
         except AppError as error:
             self._queue.mark_failed(record.id, error.client_message)

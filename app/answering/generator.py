@@ -4,8 +4,9 @@ from collections.abc import AsyncIterator, Sequence
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import Runnable, RunnableConfig
 
-from app.answering.prompts import ANSWER_PROMPT, format_context
-from app.exceptions.exception import AppError, GenerationError
+from app.answering.passages import format_context
+from app.exceptions.errors import AppError, GenerationError
+from app.prompts import ANSWER_PROMPT
 from app.retrieval.protocol import RetrievedChunk
 
 logger = logging.getLogger(__name__)

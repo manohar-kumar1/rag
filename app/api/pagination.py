@@ -1,7 +1,7 @@
 import base64
 import binascii
 
-from app.exceptions.exception import InvalidCursor
+from app.exceptions.errors import InvalidCursor
 
 CURSOR_PREFIX = "id:"
 MAX_CURSOR_LENGTH = 128

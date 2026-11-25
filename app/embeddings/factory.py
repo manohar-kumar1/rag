@@ -3,8 +3,8 @@ from sentence_transformers import SentenceTransformer
 
 from app.core.config import Settings
 from app.embeddings.jina import JinaEmbedder
-from app.embeddings.local import SentenceTransformerEmbedder
 from app.embeddings.protocol import Embedder
+from app.embeddings.sentence_transformer import SentenceTransformerEmbedder
 
 DIMENSION_PROBE_TEXT = "dimension check"
 

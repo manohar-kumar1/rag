@@ -7,8 +7,8 @@ from pathlib import Path
 
 import psycopg
 
-from app.db.schema import FULL_TEXT_LANGUAGE, MAX_INDEXED_DIMENSIONS
-from app.exceptions.exception import MigrationError
+from app.db.search_config import FULL_TEXT_LANGUAGE, MAX_INDEXED_DIMENSIONS
+from app.exceptions.errors import MigrationError
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 ADVISORY_LOCK_ID = 7283410001

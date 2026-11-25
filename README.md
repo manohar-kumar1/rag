@@ -13,8 +13,8 @@ A document ingestion service for retrieval-augmented generation. Upload PDF, DOC
 - Originals kept in a private Supabase Storage bucket
 - Hybrid retrieval in one SQL statement: HNSW cosine vector search and Postgres full-text search, fused with Reciprocal Rank Fusion, with weights, candidate counts and result count as settings
 - Cited answers from the documents only, as JSON or a server-sent event stream, with an explicit "not found" instead of invented answers
-- A LangGraph pipeline that routes each question with Google's decision model and rewrites follow-ups into standalone search queries
-- Retries with backoff on rate limits, and an optional Anthropic fallback model
+- A LangGraph pipeline that routes each question with Claude and rewrites follow-ups into standalone search queries
+- Claude (Anthropic) for answers, routing, grading and rewriting, with retries and backoff on rate limits. Agents built with `agent_middleware` also get Anthropic prompt caching
 - LangSmith tracing with secrets and model reasoning removed, and a RAGAS evaluation command
 - Configurable limits for upload size, PDF pages, extracted text and DOCX expansion
 - Versioned API under `/v1`: uploads return `202` with a job to poll, lists use cursors, and a retried upload can carry an `Idempotency-Key`
@@ -67,7 +67,7 @@ Fill every variable in `.env` (see [Configuration](#configuration)), then prepar
 
 ```bash
 uv run python -m app.db.migrate
-uv run python -m app.storage.setup
+uv run python -m app.storage.bucket_setup
 uv run uvicorn app.main:app --reload
 ```
 
@@ -107,8 +107,15 @@ Changing the embedding model or dimension means re-embedding every document.
 
 | Variable | Description |
 |---|---|
-| `CHUNK_SIZE` | Characters per chunk |
-| `CHUNK_OVERLAP` | Characters shared between neighbouring chunks. Must be smaller than the chunk size |
+| `CHUNK_MIN_TOKENS` | Sections smaller than this are merged into the previous one |
+| `CHUNK_MAX_TOKENS` | Largest chunk, in estimated tokens (4 characters each). Tables and code are not split unless they are larger |
+| `CHUNK_OVERLAP_TOKENS` | Tokens repeated between neighbouring text chunks of one section. Must be smaller than the maximum |
+| `PARENT_MAX_TOKENS` | A matched chunk is expanded to its whole section when the section is no larger than this. 0 turns expansion off |
+| `PDF_PARSER` | `llamaparse` reads headings, tables, lists and scanned pages through LlamaParse. `pypdf` reads flat text locally |
+| `LLAMAPARSE_TIER`, `LLAMAPARSE_VERSION` | Parse tier and a pinned version, so parses are repeatable and cacheable |
+| `LLAMAPARSE_TIMEOUT_SECONDS` | Timeout for each request to LlamaParse, including the upload of a large PDF |
+| `LLAMAPARSE_MAX_RETRIES` | Retries per request. Keep it low: a retried upload can start a second paid job |
+| `LLAMAPARSE_API_KEY` | LlamaParse key. Required when `PDF_PARSER` is `llamaparse` |
 | `MAX_UPLOAD_BYTES` | Largest accepted upload, enforced before the file is fully read |
 | `MAX_PDF_PAGES` | Most pages read from one PDF |
 | `MAX_EXTRACTED_CHARS` | Most text kept from one document |
@@ -147,17 +154,13 @@ Changing the embedding model or dimension means re-embedding every document.
 
 | Variable | Description |
 |---|---|
-| `GOOGLE_API_KEY` | Google API key for the primary chat model |
-| `GOOGLE_MODEL` | Primary chat model name |
-| `GOOGLE_DECISION_MODEL` | Model used for routing decisions |
-| `ANTHROPIC_API_KEY` | Optional. Enables the fallback chat model together with the model name |
-| `ANTHROPIC_MODEL` | Optional. Fallback chat model name |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `ANTHROPIC_MODEL` | Claude model for answers, routing, grading, rewriting and planning, for example `claude-haiku-5-5` |
 | `LLM_TIMEOUT_SECONDS` | Timeout for one model call |
 | `LLM_MAX_OUTPUT_TOKENS` | Cap on the tokens a model may generate per call |
-| `LLM_MAX_RETRIES` | Retries after the first attempt for rate limits and other retryable model errors, before the fallback |
+| `LLM_MAX_RETRIES` | Retries after the first attempt for rate limits and other retryable model errors |
 | `LLM_RETRY_INITIAL_SECONDS` | First backoff delay. Later delays grow exponentially with jitter |
 | `LLM_RETRY_MAX_SECONDS` | Longest backoff delay |
-| `DECISION_TIMEOUT_SECONDS` | Timeout for one routing decision call |
 
 ### Answering features
 
@@ -179,11 +182,55 @@ Changing the embedding model or dimension means re-embedding every document.
 | `RERANK_MAX_RETRIES` | Retries when the reranker answers 429 or a server error. A rate-limited query waits for them, then keeps the retrieval order |
 | `RERANK_RETRY_BACKOFF_SECONDS` | First wait between rerank retries; it doubles each time |
 | `CONTEXTUAL_CHUNKING_ENABLED` | Write a short context note for every chunk at ingestion |
-| `CONTEXTUAL_MODEL` | Google model that writes the notes. Required when contextual chunking is on |
+| `CONTEXTUAL_MODEL` | Claude model that writes the notes. Required when contextual chunking is on |
+| `HYDE_ENABLED` | Embed the question together with a short model-written hypothetical answer (HyDE). Adds one model call to every search |
+| `FILTER_EXTRACTION_ENABLED` | Let the model pick metadata filters (department, product, version, type, dates) from the question. Adds one model call to every search |
 | `ANSWER_CACHE_ENABLED` | Serve exact repeats of a question from the cache |
 | `ANSWER_CACHE_STORE` | `postgres` or `memory` |
 | `ANSWER_CACHE_TTL_SECONDS` | How long a cached answer is kept |
 | `ANSWER_CACHE_SEMANTIC_THRESHOLD` | Similarity at which a near-duplicate question is logged as a would-be cache hit. Near-duplicates are never served |
+
+### Ingestion and retrieval pipeline
+
+Each stage is its own component behind a small interface, so you can swap one without touching the others.
+
+| Stage | Component | What it does |
+|---|---|---|
+| Parse | `LayoutParser` (LlamaParse for PDFs, native parsers for DOCX and text, `pypdf` fallback) | Turns a file into typed blocks: heading, paragraph, list, table, code, each with its page |
+| Chunk | `SectionChunker` | Splits on headings first, then packs blocks up to `CHUNK_MAX_TOKENS`. Tables and code are never split mid-way. Sections smaller than `CHUNK_MIN_TOKENS` merge into the previous one |
+| Enrich | `IngestionPipeline` | Embeds each chunk with its title and heading path in front, so a chunk reads on its own |
+| Store | `PostgresDocumentStore` | Saves chunks, their parent sections, page ranges and a hash of what was embedded |
+| Rewrite | `LlmQueryRewriter`, `HydeEmbedder` | Standalone follow-ups, sub-questions for complex questions, optional HyDE |
+| Filter | `FilteringRetriever` | Optional model-chosen metadata filters, plus explicit `document_ids` and `filters` on the API |
+| Search | `PostgresHybridRetriever` | Vector and full-text search, fused with RRF |
+| Rerank | `RerankingRetriever` | Jina cross-encoder over `RERANK_CANDIDATES`, keeping `RERANK_TOP_N` |
+| Assemble | `AssemblingRetriever` | Expands a matched chunk to its whole section (up to `PARENT_MAX_TOKENS`) in the prompt, drops chunks that share a section, and keeps the matched chunk as the citation text |
+
+Unchanged documents are not paid for twice. A document whose bytes match an existing one is skipped, a changed document re-embeds only the chunks whose hash changed, and each LlamaParse result is cached by file hash, tier and version so tuning the chunker never calls LlamaParse again.
+
+**Tuning.** Judge a change with the evaluation commands below, not by feel.
+
+- `CHUNK_MAX_TOKENS` and `CHUNK_OVERLAP_TOKENS`: larger chunks keep ideas together but dilute the match. Re-indexing only re-embeds chunks whose text changed.
+- `RERANK_CANDIDATES` and `RERANK_TOP_N`: more candidates raise recall at a cost in Jina tokens and latency.
+- `PARENT_MAX_TOKENS`: larger values give the model fuller context and use more prompt tokens. 0 turns expansion off.
+- `PDF_PARSER=pypdf` skips LlamaParse and reads flat text locally, with no headings or tables.
+
+**Cost and latency.**
+
+| Stage | Cost | Where caching helps |
+|---|---|---|
+| LlamaParse | One paid job per new file and parser version, billed by LlamaParse | Already cached by file hash |
+| Embedding | Jina tokens per new chunk; the free plan allows 100,000 tokens a minute, and ingestion retries with backoff when it is hit | Chunk hashes skip unchanged chunks. Caching query embeddings by question would help repeated questions |
+| Rerank | About one Jina call per search, 4,000 to 12,000 tokens depending on candidates and chunk size | Caching reranker results by question and candidate ids would help repeats; the answer cache already covers exact repeats |
+| HyDE, filter extraction | One model call, 1 to 8 seconds, on every search when switched on | Caching extracted filters by question |
+
+**Filters.** `POST /v1/query` accepts `document_ids` and a `filters` object with `department`, `product`, `version`, `doc_type`, `updated_after` and `updated_before`. Set a document's fields with `PATCH /v1/documents/{id}`. Filters are part of the answer cache key.
+
+**Debugging.** Every stage logs one JSON line on the `rag.retrieval` logger at INFO: `rewrite` (original and rewritten query), `hyde`, `filters` (extracted and applied), `search` (candidate ids with vector rank, full-text rank and score), `rerank` (candidates and kept with scores) and `assemble` (kept ids, expanded sections, merged chunks). Logs hold ids and scores, never passage text.
+
+**Re-indexing.** `uv run python -m app.ingestion.reindex` re-parses and re-chunks every ready document from its stored original, reusing cached parses and unchanged chunk vectors.
+
+**Measuring.** `uv run python -m app.evaluation.retrieval_eval --files book.pdf --cases a.jsonl b.jsonl --variants variants.json --out out.json` ingests into a throwaway schema once per indexing setting and reports hit rate at each cutoff, MRR and page recall per variant. Cases label the relevant pages, so they stay valid when chunking changes. Use `python -m app.evaluation` for answer faithfulness.
 
 ### Tracing and evaluation
 
@@ -193,7 +240,7 @@ Changing the embedding model or dimension means re-embedding every document.
 | `LANGSMITH_API_KEY` | LangSmith API key. Required only when tracing is on |
 | `LANGSMITH_PROJECT` | LangSmith project that receives the traces. Required only when tracing is on |
 | `LANGSMITH_ENDPOINT` | LangSmith API URL, for example the US or EU endpoint. Required only when tracing is on |
-| `EVAL_JUDGE_MODEL` | Optional. Google model that scores answers during evaluation |
+| `EVAL_JUDGE_MODEL` | Optional. Claude model that scores answers during evaluation |
 | `EVAL_MAX_WORKERS` | Optional. Parallel judge calls during evaluation. Keep it low on a free tier |
 
 ## API
@@ -291,6 +338,8 @@ Two job statuses are not the document's own: `queued` is the document's `pending
 | `size_bytes` | Bytes uploaded |
 | `created_at` | Upload time |
 | `processed_at` | When ingestion finished, otherwise `null` |
+| `doc_type` | File kind (`pdf`, `docx`, `text`) unless you set it |
+| `department`, `product`, `version` | Metadata you set with `PATCH /v1/documents/{id}`; usable as query filters |
 
 ### Errors
 
@@ -346,7 +395,7 @@ Migrations are tracked and take an advisory lock, so running `up` again changes 
 ### Storage bucket
 
 ```bash
-uv run python -m app.storage.setup
+uv run python -m app.storage.bucket_setup
 ```
 
 Creates the private bucket if it is missing and refuses to continue if an existing bucket is public.
@@ -396,7 +445,7 @@ Each instance with `WORKER_ENABLED=true` runs its own worker, and row locking ke
 
 ```bash
 uv run python -m app.db.migrate
-uv run python -m app.storage.setup
+uv run python -m app.storage.bucket_setup
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 

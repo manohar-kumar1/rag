@@ -8,18 +8,22 @@ from pathlib import Path
 
 from app.composition import build_container
 from app.core.config import Settings, get_settings
-from app.db.connection import create_pool
-from app.db.scratch import scratch_schema
+from app.db.pool import create_pool
+from app.db.scratch_schema import copy_table, scratch_schema
 from app.evaluation.__main__ import with_overrides
 from app.evaluation.retrieval_scoring import RetrievalCase, score_case, summarize
-from app.exceptions.exception import AppError
+from app.exceptions.errors import AppError
 from app.exceptions.handlers import report_cli_error
 
 SCHEMA_PREFIX = "retrieval_eval"
 INDEXING_SETTINGS = (
-    "chunk_size",
-    "chunk_overlap",
+    "chunk_min_tokens",
+    "chunk_max_tokens",
+    "chunk_overlap_tokens",
     "embedding_model",
+    "pdf_parser",
+    "llamaparse_tier",
+    "llamaparse_version",
     "contextual_chunking_enabled",
     "contextual_model",
 )
@@ -40,18 +44,26 @@ def indexing_key(settings: Settings) -> tuple:
 
 
 def run_variant(
-    settings: Settings, schema: str, cases: Sequence[RetrievalCase]
-) -> tuple[dict, float]:
+    settings: Settings, schema: str, case_sets: dict[str, Sequence[RetrievalCase]]
+) -> dict[str, dict]:
     pool = create_pool(settings, search_path=schema)
     container = build_container(settings, pool)
     pool.open(wait=True, timeout=settings.db_pool_timeout_seconds)
+    results: dict[str, dict] = {}
     try:
-        started = time.perf_counter()
-        scores = [score_case(case, container.retriever.retrieve(case.question)) for case in cases]
-        elapsed = time.perf_counter() - started
+        for name, cases in case_sets.items():
+            started = time.perf_counter()
+            scores = [
+                score_case(case, container.retriever.retrieve(case.question)) for case in cases
+            ]
+            elapsed = time.perf_counter() - started
+            results[name] = {
+                "seconds_per_question": round(elapsed / len(cases), 3),
+                **summarize(scores),
+            }
     finally:
         pool.close()
-    return summarize(scores), elapsed / len(cases)
+    return results
 
 
 def ingest(settings: Settings, schema: str, files: Sequence[Path]) -> dict:
@@ -71,7 +83,10 @@ def ingest(settings: Settings, schema: str, files: Sequence[Path]) -> dict:
 
 
 def evaluate(
-    base: Settings, files: Sequence[Path], cases: Sequence[RetrievalCase], variants: dict
+    base: Settings,
+    files: Sequence[Path],
+    case_sets: dict[str, Sequence[RetrievalCase]],
+    variants: dict,
 ) -> dict:
     report: dict = {"variants": {}}
     by_indexing: dict[tuple, tuple[str, dict]] = {}
@@ -81,38 +96,35 @@ def evaluate(
             key = indexing_key(settings)
             if key not in by_indexing:
                 schema = stack.enter_context(scratch_schema(settings, SCHEMA_PREFIX))
+                copy_table(settings, schema, "parse_cache")
                 by_indexing[key] = (schema, ingest(settings, schema, files))
             schema, indexing = by_indexing[key]
-            summary, seconds = run_variant(settings, schema, cases)
-            report["variants"][label] = {
-                "settings": pairs,
-                "indexing": indexing,
-                "seconds_per_question": round(seconds, 3),
-                **summary,
-            }
-            print(
-                f"{label}: {json.dumps(summary['hit_at'])} "
-                f"mrr {summary['mrr']} recall {summary['page_recall']}",
-                flush=True,
-            )
+            results = run_variant(settings, schema, case_sets)
+            report["variants"][label] = {"settings": pairs, "indexing": indexing, "sets": results}
+            for name, summary in results.items():
+                print(
+                    f"{label} [{name}]: {json.dumps(summary['hit_at'])} "
+                    f"mrr {summary['mrr']} recall {summary['page_recall']}",
+                    flush=True,
+                )
     return report
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.evaluation.retrieval_eval")
     parser.add_argument("--files", type=Path, nargs="+", required=True)
-    parser.add_argument("--cases", type=Path, required=True)
+    parser.add_argument("--cases", type=Path, nargs="+", required=True)
     parser.add_argument("--variants", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
-    if not all(path.is_file() for path in [*args.files, args.cases, args.variants]):
+    if not all(path.is_file() for path in [*args.files, *args.cases, args.variants]):
         print("every input must be an existing file", file=sys.stderr)
         return 2
     try:
         report = evaluate(
             get_settings(),
             args.files,
-            load_cases(args.cases),
+            {path.stem: load_cases(path) for path in args.cases},
             load_variants(args.variants),
         )
     except (AppError, ValueError) as error:

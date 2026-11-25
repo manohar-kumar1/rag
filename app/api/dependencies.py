@@ -5,9 +5,9 @@ from fastapi import Depends, Request
 from app.answering.protocol import Answerer
 from app.composition import Container
 from app.core.readiness import ReadinessChecker
-from app.ingestion.documents import DocumentService
+from app.ingestion.document_service import DocumentService
 from app.ingestion.idempotency import IdempotentUploads
-from app.ingestion.jobs import JobService
+from app.ingestion.job_service import JobService
 
 
 def get_container(request: Request) -> Container:
